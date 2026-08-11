@@ -1,5 +1,11 @@
 # QGC tests add sources to ${CMAKE_PROJECT_NAME} (test/Vehicle/, test/MissionManager/); keep this test on the same target.
 
+# Test bodies are compiled behind QGC_GST_STREAMING; without GStreamer the moc'd
+# slot declarations have no implementations and the final link fails.
+if(NOT QGC_ENABLE_GST_VIDEOSTREAMING)
+    return()
+endif()
+
 target_sources(${CMAKE_PROJECT_NAME}
     PRIVATE
         GStreamerTest.cc
