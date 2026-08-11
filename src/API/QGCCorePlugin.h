@@ -162,6 +162,22 @@ public:
     /// @return Complex items to be made available to user
     virtual QVariantList complexMissionItemNames(Vehicle *vehicle);
 
+    /// Policy hook for complex mission item creation/loading.
+    /// Called by MissionController for:
+    ///  - Complex item menu availability checks (canonicalName input)
+    ///  - Interactive insertion (canonicalName input)
+    ///  - JSON plan loading (json complexItemType input)
+    /// The targetVisualItems model is the model being populated/edited. During JSON load this is the
+    /// temporary model under construction, not the current controller model.
+    /// @param complexItemType Canonical or JSON complex mission item type key
+    /// @param masterController Target plan context
+    /// @param targetVisualItems Target mission visual model context
+    /// @param errorMessage Optional user-visible reason when returning false
+    /// @return true if creation/loading is allowed
+    virtual bool canCreateComplexMissionItem(const QString& complexItemType,
+                                             const PlanMasterController* masterController,
+                                             const QmlObjectListModel* targetVisualItems, QString& errorMessage) const;
+
     /// Factory for creating custom complex mission items.
     /// Called by MissionController when the canonicalName/complexItemType is not one of the
     /// built-in types (Survey, CorridorScan, StructureScan, FixedWingLanding, VTOLLanding).

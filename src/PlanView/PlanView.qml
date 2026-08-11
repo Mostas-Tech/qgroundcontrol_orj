@@ -167,6 +167,12 @@ Item {
             }
             _missionController.setCurrentPlanViewSeqNum(0, true)
         }
+
+        function onPlanEditLayerRequested(layerNodeType) {
+            if (rightPanel) {
+                rightPanel.selectLayer(layerNodeType)
+            }
+        }
     }
 
     function insertSimpleItemAfterCurrent(coordinate) {

@@ -9,11 +9,7 @@ endif()
 # ----------------------------------------------------------------------------
 # Test Framework Sources
 # ----------------------------------------------------------------------------
-target_sources(${CMAKE_PROJECT_NAME}
-    PRIVATE
-        UnitTestList.cc
-        UnitTestList.h
-)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE UnitTestList.cc UnitTestList.h)
 
 # ----------------------------------------------------------------------------
 # Test Dependencies
@@ -26,11 +22,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_
 # QGC_UNITTEST_BUILD is defined directory-wide from the root CMakeLists.txt when
 # QGC_BUILD_TESTING is enabled, covering this target and all src/ targets.
 
-target_precompile_headers(${CMAKE_PROJECT_NAME} PRIVATE
-    <QtTest/QTest>
-    <UnitTest.h>
-    <MultiSignalSpy.h>
-)
+target_precompile_headers(${CMAKE_PROJECT_NAME} PRIVATE <QtTest/QTest> <UnitTest.h> <MultiSignalSpy.h>)
 
 # ----------------------------------------------------------------------------
 # CTest Integration (CTest included in root CMakeLists.txt)
@@ -66,18 +58,34 @@ include(Sanitizers)
 # Until items 1-4 land, configuring with -DQGC_BUILD_TEST_BINARY=ON builds no
 # qgc_tests target, so add_qgc_test() falls back to the app binary (no breakage).
 if(QGC_BUILD_TEST_BINARY)
-    message(WARNING
-        "QGC_BUILD_TEST_BINARY=ON: qgc_tests target wiring is not yet implemented; "
-        "tests will continue to run from the main app binary. See test/CMakeLists.txt.")
+    message(WARNING "QGC_BUILD_TEST_BINARY=ON: qgc_tests target wiring is not yet implemented; "
+                    "tests will continue to run from the main app binary. See test/CMakeLists.txt."
+    )
 endif()
 
 # Sanitizers add significant runtime overhead; expand CTest per-test limits to
 # avoid false timeout failures in CI sanitizer jobs.
-if(QGC_ENABLE_ASAN OR QGC_ENABLE_UBSAN OR QGC_ENABLE_TSAN OR QGC_ENABLE_MSAN)
-    set(QGC_TEST_TIMEOUT_UNIT 180 CACHE STRING "Timeout for unit tests (seconds)" FORCE)
-    set(QGC_TEST_TIMEOUT_INTEGRATION 360 CACHE STRING "Timeout for integration tests (seconds)" FORCE)
-    set(QGC_TEST_TIMEOUT_SLOW 540 CACHE STRING "Timeout for slow tests (seconds)" FORCE)
-    set(QGC_TEST_TIMEOUT_DEFAULT 270 CACHE STRING "Default test timeout (seconds)" FORCE)
+if(QGC_ENABLE_ASAN
+   OR QGC_ENABLE_UBSAN
+   OR QGC_ENABLE_TSAN
+   OR QGC_ENABLE_MSAN
+)
+    set(QGC_TEST_TIMEOUT_UNIT
+        180
+        CACHE STRING "Timeout for unit tests (seconds)" FORCE
+    )
+    set(QGC_TEST_TIMEOUT_INTEGRATION
+        360
+        CACHE STRING "Timeout for integration tests (seconds)" FORCE
+    )
+    set(QGC_TEST_TIMEOUT_SLOW
+        540
+        CACHE STRING "Timeout for slow tests (seconds)" FORCE
+    )
+    set(QGC_TEST_TIMEOUT_DEFAULT
+        270
+        CACHE STRING "Default test timeout (seconds)" FORCE
+    )
     set(QGC_TEST_TIMEOUT_EXTENDED 360)
 else()
     set(QGC_TEST_TIMEOUT_EXTENDED 180)
@@ -111,3 +119,7 @@ add_subdirectory(Utilities)
 add_subdirectory(Viewer3D)
 add_subdirectory(Vehicle)
 add_subdirectory(QmlUITests)
+
+if(QGC_CUSTOM_BUILD AND EXISTS "${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test/CMakeLists.txt")
+    add_subdirectory("${CMAKE_SOURCE_DIR}/${QGC_CUSTOM_DIR}/test" "${CMAKE_CURRENT_BINARY_DIR}/CustomTests")
+endif()

@@ -1,23 +1,23 @@
-#include "QmlObjectListModel.h"
 #include "MissionControllerTest.h"
+
+#include <QtCore/QRegularExpression>
+#include <QtCore/QTemporaryDir>
 
 #include "AppSettings.h"
 #include "CameraCalc.h"
 #include "CorridorScanComplexItem.h"
-#include "StructureScanComplexItem.h"
-#include "SurveyComplexItem.h"
-#include "UnitTestCoords.h"
 #include "MissionController.h"
 #include "MissionSettingsItem.h"
+#include "MultiSignalSpy.h"
 #include "PlanMasterController.h"
 #include "PlanViewSettings.h"
+#include "QmlObjectListModel.h"
 #include "SettingsManager.h"
 #include "SimpleMissionItem.h"
+#include "StructureScanComplexItem.h"
+#include "SurveyComplexItem.h"
 #include "TestFixtures.h"
-#include "MultiSignalSpy.h"
-
-#include <QtCore/QRegularExpression>
-#include <QtCore/QTemporaryDir>
+#include "UnitTestCoords.h"
 using namespace TestFixtures;
 
 MissionControllerTest::~MissionControllerTest() = default;
@@ -27,6 +27,18 @@ namespace {
 // checks are direct arithmetic, so they use a much tighter 1e-4 m tolerance.
 constexpr double kCoordToleranceMeters = 0.5;
 constexpr double kAltToleranceMeters = 1e-4;
+
+bool containsComplexItemCanonicalName(const QVariantList& complexItems, const QString& canonicalName)
+{
+    for (const QVariant& itemVariant : complexItems) {
+        const QVariantMap itemMap = itemVariant.toMap();
+        if (itemMap.value(QStringLiteral("canonicalName")).toString() == canonicalName) {
+            return true;
+        }
+    }
+
+    return false;
+}
 }  // namespace
 
 void MissionControllerTest::cleanup()
@@ -153,18 +165,19 @@ void MissionControllerTest::_testGimbalRecalc()
     item->cameraSection()->gimbalYaw()->setRawValue(0.0);
     SettingsManager::instance()->planViewSettings()->showGimbalOnlyWhenSet()->setRawValue(false);
     QVERIFY_TRUE_WAIT(([&]() {
-        for (int i = 1; i < _missionController->visualItems()->count(); i++) {
-            VisualMissionItem* visualItem = _missionController->visualItems()->value<VisualMissionItem*>(i);
-            if (i >= yawIndex) {
-                if (!qFuzzyCompare(visualItem->missionGimbalYaw() + 1.0, 1.0)) {
-                    return false;
-                }
-            } else if (!qIsNaN(visualItem->missionGimbalYaw())) {
-                return false;
-            }
-        }
-        return true;
-    }()),
+                          for (int i = 1; i < _missionController->visualItems()->count(); i++) {
+                              VisualMissionItem* visualItem =
+                                  _missionController->visualItems()->value<VisualMissionItem*>(i);
+                              if (i >= yawIndex) {
+                                  if (!qFuzzyCompare(visualItem->missionGimbalYaw() + 1.0, 1.0)) {
+                                      return false;
+                                  }
+                              } else if (!qIsNaN(visualItem->missionGimbalYaw())) {
+                                  return false;
+                              }
+                          }
+                          return true;
+                      }()),
                       TestTimeout::mediumMs());
     for (int i = 1; i < _missionController->visualItems()->count(); i++) {
         VisualMissionItem* visualItem = _missionController->visualItems()->value<VisualMissionItem*>(i);
@@ -191,18 +204,19 @@ void MissionControllerTest::_testVehicleYawRecalc()
         _missionController->insertSimpleMissionItem(currentCoord, i);
     }
     QVERIFY_TRUE_WAIT(([&]() {
-        double expectedVehicleYaw = wpAngleInc;
-        for (int i = 2; i < cMissionItems; i++) {
-            VisualMissionItem* visualItem = _missionController->visualItems()->value<VisualMissionItem*>(i);
-            if (!qFuzzyCompare(visualItem->missionVehicleYaw() + 1.0, expectedVehicleYaw + 1.0)) {
-                return false;
-            }
-            if (i <= cMissionItems - 1) {
-                expectedVehicleYaw += wpAngleInc;
-            }
-        }
-        return true;
-    }()),
+                          double expectedVehicleYaw = wpAngleInc;
+                          for (int i = 2; i < cMissionItems; i++) {
+                              VisualMissionItem* visualItem =
+                                  _missionController->visualItems()->value<VisualMissionItem*>(i);
+                              if (!qFuzzyCompare(visualItem->missionVehicleYaw() + 1.0, expectedVehicleYaw + 1.0)) {
+                                  return false;
+                              }
+                              if (i <= cMissionItems - 1) {
+                                  expectedVehicleYaw += wpAngleInc;
+                              }
+                          }
+                          return true;
+                      }()),
                       TestTimeout::mediumMs());
     // No specific vehicle yaw set yet. Vehicle yaw should track flight path.
     double expectedVehicleYaw = wpAngleInc;
@@ -216,19 +230,20 @@ void MissionControllerTest::_testVehicleYawRecalc()
     SimpleMissionItem* simpleItem = _missionController->visualItems()->value<SimpleMissionItem*>(3);
     simpleItem->missionItem().setParam4(66);
     QVERIFY_TRUE_WAIT(([&]() {
-        double expectedYaw = wpAngleInc;
-        for (int i = 2; i < cMissionItems; i++) {
-            VisualMissionItem* visualItem = _missionController->visualItems()->value<VisualMissionItem*>(i);
-            const double expected = (i == 3) ? 66.0 : expectedYaw;
-            if (!qFuzzyCompare(visualItem->missionVehicleYaw() + 1.0, expected + 1.0)) {
-                return false;
-            }
-            if (i <= cMissionItems - 1) {
-                expectedYaw += wpAngleInc;
-            }
-        }
-        return true;
-    }()),
+                          double expectedYaw = wpAngleInc;
+                          for (int i = 2; i < cMissionItems; i++) {
+                              VisualMissionItem* visualItem =
+                                  _missionController->visualItems()->value<VisualMissionItem*>(i);
+                              const double expected = (i == 3) ? 66.0 : expectedYaw;
+                              if (!qFuzzyCompare(visualItem->missionVehicleYaw() + 1.0, expected + 1.0)) {
+                                  return false;
+                              }
+                              if (i <= cMissionItems - 1) {
+                                  expectedYaw += wpAngleInc;
+                              }
+                          }
+                          return true;
+                      }()),
                       TestTimeout::mediumMs());
     // All item should track vehicle path except for the one changed
     expectedVehicleYaw = wpAngleInc;
@@ -266,10 +281,8 @@ void MissionControllerTest::_testMissionReposition()
     const double oldAlt2 = item2->editableAlt();
 
     const QGeoCoordinate newHome = home.atDistanceAndAzimuth(200.0, 65.0);
-    const QGeoCoordinate expectedWp1 =
-        newHome.atDistanceAndAzimuth(home.distanceTo(wp1), home.azimuthTo(wp1));
-    const QGeoCoordinate expectedWp2 =
-        newHome.atDistanceAndAzimuth(home.distanceTo(wp2), home.azimuthTo(wp2));
+    const QGeoCoordinate expectedWp1 = newHome.atDistanceAndAzimuth(home.distanceTo(wp1), home.azimuthTo(wp1));
+    const QGeoCoordinate expectedWp2 = newHome.atDistanceAndAzimuth(home.distanceTo(wp2), home.azimuthTo(wp2));
     _missionController->repositionMission(newHome, true, true);
     QVERIFY_TRUE_WAIT((settingsItem->coordinate().distanceTo(newHome) <= kCoordToleranceMeters) &&
                           (item1->coordinate().distanceTo(expectedWp1) <= kCoordToleranceMeters) &&
@@ -343,10 +356,8 @@ void MissionControllerTest::_testMissionRotate()
     const double oldAlt1 = item1->editableAlt();
     const double oldAlt2 = item2->editableAlt();
 
-    const QGeoCoordinate expectedWp1 =
-        home.atDistanceAndAzimuth(home.distanceTo(wp1), home.azimuthTo(wp1) + 90.0);
-    const QGeoCoordinate expectedWp2 =
-        home.atDistanceAndAzimuth(home.distanceTo(wp2), home.azimuthTo(wp2) + 90.0);
+    const QGeoCoordinate expectedWp1 = home.atDistanceAndAzimuth(home.distanceTo(wp1), home.azimuthTo(wp1) + 90.0);
+    const QGeoCoordinate expectedWp2 = home.atDistanceAndAzimuth(home.distanceTo(wp2), home.azimuthTo(wp2) + 90.0);
 
     _missionController->rotateMission(90.0, true, true);
     QVERIFY_TRUE_WAIT((settingsItem->coordinate().distanceTo(home) <= kCoordToleranceMeters) &&
@@ -366,8 +377,7 @@ void MissionControllerTest::_testMissionTransformsInvalidHome()
 {
     _initForFirmwareType(MAV_AUTOPILOT_PX4);
 
-    MissionSettingsItem* settingsItem =
-        _missionController->visualItems()->value<MissionSettingsItem*>(0);
+    MissionSettingsItem* settingsItem = _missionController->visualItems()->value<MissionSettingsItem*>(0);
     QVERIFY(settingsItem);
 
     const QGeoCoordinate home = Coord::zurich();
@@ -386,10 +396,12 @@ void MissionControllerTest::_testMissionTransformsInvalidHome()
     QVERIFY_TRUE_WAIT(!settingsItem->coordinate().isValid(), TestTimeout::shortMs());
 
     // repositionMission and rotateMission require a valid home — they should be no-ops
-    expectLogMessage("PlanManager.MissionController", QtWarningMsg, QRegularExpression("Cannot reposition mission while home is invalid"));
+    expectLogMessage("PlanManager.MissionController", QtWarningMsg,
+                     QRegularExpression("Cannot reposition mission while home is invalid"));
     _missionController->repositionMission(home.atDistanceAndAzimuth(100.0, 0.0), true, true);
     verifyExpectedLogMessage();
-    expectLogMessage("PlanManager.MissionController", QtWarningMsg, QRegularExpression("Cannot rotate mission while home is invalid"));
+    expectLogMessage("PlanManager.MissionController", QtWarningMsg,
+                     QRegularExpression("Cannot rotate mission while home is invalid"));
     _missionController->rotateMission(45.0, true, true);
     verifyExpectedLogMessage();
     QCOMPARE_COORDS(item1->coordinate(), oldItemCoord, kCoordToleranceMeters);
@@ -412,7 +424,7 @@ void MissionControllerTest::_testLoadJsonSectionAvailable()
     for (int i = 1; i < visualItems->count(); i++) {
         SimpleMissionItem* item = visualItems->value<SimpleMissionItem*>(i);
         QVERIFY(item);
-        if ((int)item->command() == MAV_CMD_NAV_WAYPOINT) {
+        if ((int) item->command() == MAV_CMD_NAV_WAYPOINT) {
             QCOMPARE(item->cameraSection()->available(), true);
             QCOMPARE(item->speedSection()->available(), true);
         } else {
@@ -498,6 +510,78 @@ void MissionControllerTest::_testInsertComplexItemFromKML()
     QCOMPARE(_missionController->visualItems()->count(), 4);
 }
 
+void MissionControllerTest::_testComplexMissionItemsMenuEntriesInsertable()
+{
+    _initForFirmwareType(MAV_AUTOPILOT_PX4);
+
+    const QVariantList complexItems = _missionController->complexMissionItems();
+    QVERIFY(!complexItems.isEmpty());
+
+    int expectedVisualItemCount = _missionController->visualItems()->count();
+    const QGeoCoordinate center = Coord::zurich();
+    for (const QVariant& itemVariant : complexItems) {
+        const QVariantMap itemMap = itemVariant.toMap();
+        const QString canonicalName = itemMap.value(QStringLiteral("canonicalName")).toString();
+        QVERIFY2(!canonicalName.isEmpty(), "Complex mission item entry is missing canonicalName");
+
+        VisualMissionItem* insertedItem =
+            _missionController->insertComplexMissionItem(canonicalName, center, expectedVisualItemCount, false);
+        QVERIFY2(insertedItem, qPrintable(QStringLiteral("Failed to insert complex item '%1'").arg(canonicalName)));
+        ++expectedVisualItemCount;
+        QCOMPARE(_missionController->visualItems()->count(), expectedVisualItemCount);
+    }
+}
+
+void MissionControllerTest::_testComplexMissionItemsRefreshOnOfflineVehicleTypeChange()
+{
+    SettingsFixture settingsFixture;
+    settingsFixture.setOfflineFirmware(MAV_AUTOPILOT_PX4);
+    settingsFixture.setOfflineVehicleType(MAV_TYPE_QUADROTOR);
+
+    PlanMasterController localController;
+    localController.setFlyView(false);
+    localController.start();
+
+    MissionController* localMissionController = localController.missionController();
+    QVERIFY(localMissionController);
+    QVERIFY(containsComplexItemCanonicalName(localMissionController->complexMissionItems(),
+                                             QString::fromLatin1(StructureScanComplexItem::canonicalName)));
+
+    MultiSignalSpy missionControllerSpy;
+    QVERIFY(missionControllerSpy.init(localMissionController));
+
+    missionControllerSpy.clearSignal("complexMissionItemsChanged");
+    settingsFixture.setOfflineVehicleType(MAV_TYPE_FIXED_WING);
+    QVERIFY(missionControllerSpy.waitForSignal("complexMissionItemsChanged", TestTimeout::shortMs()));
+    QCOMPARE(missionControllerSpy.count("complexMissionItemsChanged"), 1);
+    QVERIFY(!containsComplexItemCanonicalName(localMissionController->complexMissionItems(),
+                                              QString::fromLatin1(StructureScanComplexItem::canonicalName)));
+
+    missionControllerSpy.clearSignal("complexMissionItemsChanged");
+    settingsFixture.setOfflineVehicleType(MAV_TYPE_QUADROTOR);
+    QVERIFY(missionControllerSpy.waitForSignal("complexMissionItemsChanged", TestTimeout::shortMs()));
+    QCOMPARE(missionControllerSpy.count("complexMissionItemsChanged"), 1);
+    QVERIFY(containsComplexItemCanonicalName(localMissionController->complexMissionItems(),
+                                             QString::fromLatin1(StructureScanComplexItem::canonicalName)));
+}
+
+void MissionControllerTest::_testComplexMissionItemsNoSignalWhenVisualItemsMutate()
+{
+    _initForFirmwareType(MAV_AUTOPILOT_PX4);
+
+    MultiSignalSpy missionControllerSpy;
+    QVERIFY(missionControllerSpy.init(_missionController));
+    QSignalSpy* complexItemsSignalSpy = missionControllerSpy.spy("complexMissionItemsChanged");
+    QVERIFY(complexItemsSignalSpy);
+
+    missionControllerSpy.clearSignal("complexMissionItemsChanged");
+    QVERIFY(_missionController->insertSimpleMissionItem(Coord::zurich(), 1, false));
+    QVERIFY_NO_SIGNAL_WAIT((*complexItemsSignalSpy), TestTimeout::shortMs());
+
+    _missionController->removeAll();
+    QVERIFY_NO_SIGNAL_WAIT((*complexItemsSignalSpy), TestTimeout::shortMs());
+}
+
 void MissionControllerTest::_testLoadPlanRoundTripComplexItems()
 {
     _initForFirmwareType(MAV_AUTOPILOT_PX4);
@@ -505,13 +589,13 @@ void MissionControllerTest::_testLoadPlanRoundTripComplexItems()
     const QGeoCoordinate center = Coord::zurich();
 
     // Insert a Survey and a CorridorScan
-    VisualMissionItem* surveyVisual = _missionController->insertComplexMissionItem(
-        SurveyComplexItem::canonicalName, center, 1, false);
+    VisualMissionItem* surveyVisual =
+        _missionController->insertComplexMissionItem(SurveyComplexItem::canonicalName, center, 1, false);
     QVERIFY(surveyVisual);
     QVERIFY(qobject_cast<SurveyComplexItem*>(surveyVisual));
 
-    VisualMissionItem* corridorVisual = _missionController->insertComplexMissionItem(
-        CorridorScanComplexItem::canonicalName, center, 2, false);
+    VisualMissionItem* corridorVisual =
+        _missionController->insertComplexMissionItem(CorridorScanComplexItem::canonicalName, center, 2, false);
     QVERIFY(corridorVisual);
     QVERIFY(qobject_cast<CorridorScanComplexItem*>(corridorVisual));
 
@@ -525,7 +609,7 @@ void MissionControllerTest::_testLoadPlanRoundTripComplexItems()
     QVERIFY(_masterController->saveToFile(planPath));
 
     _missionController->removeAll();
-    QCOMPARE(_missionController->visualItems()->count(), 1); // home only
+    QCOMPARE(_missionController->visualItems()->count(), 1);  // home only
 
     _masterController->loadFromFile(planPath);
     QCOMPARE(_missionController->visualItems()->count(), 3);
@@ -550,9 +634,9 @@ void MissionControllerTest::_testInsertSurveyAppliesAltFrameInMixedMode()
     simpleItem->altitude()->setRawValue(150.0);
 
     // Survey default distanceMode is Relative; inserting after an Absolute item should change it
-    QCOMPARE(_missionController->visualItems()->count(), 2); // home + simple
-    VisualMissionItem* surveyVisual = _missionController->insertComplexMissionItem(
-        SurveyComplexItem::canonicalName, coord, 2, false);
+    QCOMPARE(_missionController->visualItems()->count(), 2);  // home + simple
+    VisualMissionItem* surveyVisual =
+        _missionController->insertComplexMissionItem(SurveyComplexItem::canonicalName, coord, 2, false);
     QVERIFY(surveyVisual);
     SurveyComplexItem* surveyItem = qobject_cast<SurveyComplexItem*>(surveyVisual);
     QVERIFY(surveyItem);
@@ -575,14 +659,55 @@ void MissionControllerTest::_testInsertNonSurveyComplexItemMixedModeNoCrash()
     simpleItem->setAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrameAbsolute);
 
     // CorridorScan inherits the base-class no-op — distanceMode stays at its default (Relative)
-    VisualMissionItem* corridorVisual = _missionController->insertComplexMissionItem(
-        CorridorScanComplexItem::canonicalName, coord, 2, false);
+    VisualMissionItem* corridorVisual =
+        _missionController->insertComplexMissionItem(CorridorScanComplexItem::canonicalName, coord, 2, false);
     QVERIFY(corridorVisual);
     CorridorScanComplexItem* corridorItem = qobject_cast<CorridorScanComplexItem*>(corridorVisual);
     QVERIFY(corridorItem);
 
     QCOMPARE(corridorItem->cameraCalc()->distanceMode(), QGroundControlQmlGlobal::AltitudeFrameRelative);
     QCOMPARE(_missionController->visualItems()->count(), 3);
+}
+
+void MissionControllerTest::_testRequestPlanEditLayer_data()
+{
+    QTest::addColumn<QString>("layerNodeType");
+    QTest::addColumn<bool>("expectSignal");
+    QTest::addColumn<bool>("expectWarning");
+
+    QTest::newRow("valid-layer-request") << QStringLiteral("missionGroup") << true << false;
+    QTest::newRow("empty-layer-request") << QString() << false << true;
+}
+
+void MissionControllerTest::_testRequestPlanEditLayer()
+{
+    QFETCH(QString, layerNodeType);
+    QFETCH(bool, expectSignal);
+    QFETCH(bool, expectWarning);
+
+    _initForFirmwareType(MAV_AUTOPILOT_PX4);
+
+    MultiSignalSpy missionControllerSpy;
+    QVERIFY(missionControllerSpy.init(_missionController));
+    missionControllerSpy.clearSignal("planEditLayerRequested");
+
+    if (expectWarning) {
+        expectLogMessage("PlanManager.MissionController", QtWarningMsg,
+                         QRegularExpression(QStringLiteral("Ignoring empty plan edit layer request")));
+    }
+
+    _missionController->requestPlanEditLayer(layerNodeType);
+
+    if (expectWarning) {
+        verifyExpectedLogMessage();
+    }
+
+    if (expectSignal) {
+        QVERIFY(missionControllerSpy.emittedOnce("planEditLayerRequested"));
+        QCOMPARE(missionControllerSpy.argument<QString>("planEditLayerRequested"), layerNodeType);
+    } else {
+        QVERIFY(missionControllerSpy.notEmitted("planEditLayerRequested"));
+    }
 }
 
 #include "UnitTest.h"

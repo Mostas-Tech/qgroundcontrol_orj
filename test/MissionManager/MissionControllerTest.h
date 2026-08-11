@@ -31,10 +31,14 @@ private slots:
     void _testInsertSurveyAppliesAltFrameInMixedMode();
     void _testInsertNonSurveyComplexItemMixedModeNoCrash();
     void _testInsertComplexItemFromKML();
+    void _testComplexMissionItemsMenuEntriesInsertable();
+    void _testComplexMissionItemsRefreshOnOfflineVehicleTypeChange();
+    void _testComplexMissionItemsNoSignalWhenVisualItemsMutate();
     void _testInsertValidityHomePositionGating();
 
     // Parameterized tests - runs once per autopilot type
     UT_PARAMETERIZED_TEST(_testEmptyVehicle);
+    UT_PARAMETERIZED_TEST(_testRequestPlanEditLayer);
 
 private:
     void _initForFirmwareType(MAV_AUTOPILOT firmwareType);

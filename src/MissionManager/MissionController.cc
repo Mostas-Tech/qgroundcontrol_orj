@@ -35,6 +35,18 @@
 
 QGC_LOGGING_CATEGORY(MissionControllerLog, "PlanManager.MissionController")
 
+namespace {
+
+void deleteLoadedVisualItems(QmlObjectListModel* loadedVisualItems)
+{
+    while (!loadedVisualItems->isEmpty()) {
+        delete loadedVisualItems->removeAt(loadedVisualItems->count() - 1);
+    }
+    delete loadedVisualItems;
+}
+
+}  // namespace
+
 MissionController::MissionController(PlanMasterController* masterController, QObject *parent)
     : PlanElementController (masterController, parent)
     , _controllerVehicle    (masterController->controllerVehicle())
@@ -59,9 +71,12 @@ MissionController::MissionController(PlanMasterController* masterController, QOb
     // The follow is used to compress multiple recalc calls in a row to into a single call.
     connect(this, &MissionController::_recalcMissionFlightStatusSignal, this, &MissionController::_recalcMissionFlightStatus,   Qt::QueuedConnection);
     connect(this, &MissionController::_recalcFlightPathSegmentsSignal,  this, &MissionController::_recalcFlightPathSegments,    Qt::QueuedConnection);
+    connect(_controllerVehicle, &Vehicle::vehicleTypeChanged, this, &MissionController::_refreshComplexMissionItems);
     qgcApp()->addCompressedSignal(QMetaMethod::fromSignal(&MissionController::_recalcMissionFlightStatusSignal));
     qgcApp()->addCompressedSignal(QMetaMethod::fromSignal(&MissionController::_recalcFlightPathSegmentsSignal));
     qgcApp()->addCompressedSignal(QMetaMethod::fromSignal(&MissionController::recalcTerrainProfile));
+
+    _cachedComplexMissionItems = _complexMissionItemsForTarget(_visualItems);
 }
 
 MissionController::~MissionController()
@@ -390,8 +405,23 @@ VisualMissionItem* MissionController::insertCancelROIMissionItem(int visualItemI
 
 VisualMissionItem* MissionController::insertComplexMissionItem(QString itemName, QGeoCoordinate mapCenterCoordinate, int visualItemIndex, bool makeCurrentItem)
 {
+    QString policyError;
+    if (!_isComplexMissionItemAllowed(itemName, _visualItems, policyError)) {
+        if (policyError.isEmpty()) {
+            policyError = tr("Creation of complex mission item '%1' is not allowed for this plan.").arg(itemName);
+        }
+
+        qCWarning(MissionControllerLog) << "Complex mission item creation denied"
+                                        << "type:" << itemName << "reason:" << policyError;
+        qgcApp()->showAppMessage(policyError);
+        return nullptr;
+    }
+
     ComplexMissionItem* newItem = QGCCorePlugin::instance()->createComplexMissionItem(itemName, _masterController, _flyView);
     if (!newItem) {
+        const QString error = tr("Unsupported complex mission item type: %1").arg(itemName);
+        qCWarning(MissionControllerLog) << error;
+        qgcApp()->showAppMessage(error);
         return nullptr;
     }
     newItem->setCoordinate(mapCenterCoordinate);
@@ -411,14 +441,39 @@ VisualMissionItem* MissionController::insertComplexMissionItem(QString itemName,
 
 VisualMissionItem* MissionController::insertComplexMissionItemFromKMLOrSHP(QString itemName, QString file, int visualItemIndex, bool makeCurrentItem)
 {
+    QString policyError;
+    if (!_isComplexMissionItemAllowed(itemName, _visualItems, policyError)) {
+        if (policyError.isEmpty()) {
+            policyError = tr("Creation of complex mission item '%1' is not allowed for this plan.").arg(itemName);
+        }
+
+        qCWarning(MissionControllerLog) << "Complex mission item creation denied"
+                                        << "type:" << itemName << "reason:" << policyError;
+        qgcApp()->showAppMessage(policyError);
+        return nullptr;
+    }
+
     ComplexMissionItem* newItem = QGCCorePlugin::instance()->createComplexMissionItem(itemName, _masterController, _flyView, file);
     if (!newItem) {
+        const QString error = tr("Unsupported complex mission item type: %1").arg(itemName);
+        qCWarning(MissionControllerLog) << error;
+        qgcApp()->showAppMessage(error);
         return nullptr;
     }
 
     _insertComplexMissionItemWorker(QGeoCoordinate(), newItem, visualItemIndex, makeCurrentItem);
 
     return newItem;
+}
+
+void MissionController::requestPlanEditLayer(const QString& layerNodeType)
+{
+    if (layerNodeType.isEmpty()) {
+        qCWarning(MissionControllerLog) << "Ignoring empty plan edit layer request";
+        return;
+    }
+
+    emit planEditLayerRequested(layerNodeType);
 }
 
 void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& mapCenterCoordinate, ComplexMissionItem* complexItem, int visualItemIndex, bool makeCurrentItem)
@@ -676,13 +731,14 @@ bool MissionController::_loadJsonMissionFileV2(const QJsonObject& json, QmlObjec
                     // This needs to be a TakeoffMissionItem
                     TakeoffMissionItem* takeoffItem = new TakeoffMissionItem(_masterController, _flyView, settingsItem, true /* forLoad */);
                     takeoffItem->load(itemObject, nextSequenceNumber, errorString);
-                    simpleItem->deleteLater();
+                    delete simpleItem;
                     simpleItem = takeoffItem;
                 }
                 qCDebug(MissionControllerLog) << "Loading simple item: nextSequenceNumber:command" << nextSequenceNumber << simpleItem->command();
                 nextSequenceNumber = simpleItem->lastSequenceNumber() + 1;
                 visualItems->append(simpleItem);
             } else {
+                delete simpleItem;
                 return false;
             }
         } else if (itemType == VisualMissionItem::jsonTypeComplexItemValue) {
@@ -695,6 +751,19 @@ bool MissionController::_loadJsonMissionFileV2(const QJsonObject& json, QmlObjec
             QString complexItemType = itemObject[ComplexMissionItem::jsonComplexItemTypeKey].toString();
 
             qCDebug(MissionControllerLog) << "Loading complex item type:" << complexItemType << "nextSequenceNumber:" << nextSequenceNumber;
+            QString policyError;
+            if (!_isComplexMissionItemAllowed(complexItemType, visualItems, policyError)) {
+                if (policyError.isEmpty()) {
+                    policyError =
+                        tr("Loading complex mission item type '%1' is not allowed for this plan.").arg(complexItemType);
+                }
+
+                qCWarning(MissionControllerLog) << "Complex mission item load denied"
+                                                << "type:" << complexItemType << "reason:" << policyError;
+                errorString = policyError;
+                return false;
+            }
+
             ComplexMissionItem* complexItem = QGCCorePlugin::instance()->createComplexMissionItem(complexItemType, _masterController, _flyView);
             if (!complexItem) {
                 errorString = tr("Unsupported complex item type: %1").arg(complexItemType);
@@ -774,13 +843,14 @@ bool MissionController::_loadTextMissionFile(QTextStream& stream, QmlObjectListM
                     if (TakeoffMissionItem::isTakeoffCommand(static_cast<MAV_CMD>(item->command()))) {
                         // This needs to be a TakeoffMissionItem
                         TakeoffMissionItem* takeoffItem = new TakeoffMissionItem(item->missionItem(), _masterController, _flyView, settingsItem, false /* forLoad */);
-                        item->deleteLater();
+                        delete item;
                         item = takeoffItem;
                     }
                     visualItems->append(item);
                 }
                 firstItem = false;
             } else {
+                delete item;
                 errorString = tr("The mission file is corrupted.");
                 return false;
             }
@@ -826,6 +896,7 @@ bool MissionController::load(const QJsonObject& json, QString& errorString)
 
     if (!_loadJsonMissionFileV2(json, loadedVisualItems, errorStr)) {
         errorString = errorMessage.arg(errorStr);
+        deleteLoadedVisualItems(loadedVisualItems);
         return false;
     }
     _initLoadedVisualItems(loadedVisualItems);
@@ -845,6 +916,7 @@ bool MissionController::loadTextFile(QFile& file, QString& errorString)
     QmlObjectListModel* loadedVisualItems = new QmlObjectListModel(this);
     if (!_loadTextMissionFile(stream, loadedVisualItems, errorStr)) {
         errorString = errorMessage.arg(errorStr);
+        deleteLoadedVisualItems(loadedVisualItems);
         return false;
     }
 
@@ -1484,11 +1556,14 @@ void MissionController::_initAllVisualItems(void)
 
     connect(_visualItems, &QmlObjectListModel::dirtyChanged, this, &MissionController::_visualItemsDirtyChanged);
     connect(_visualItems, &QmlObjectListModel::countChanged, this, &MissionController::containsItemsChanged);
+    connect(_visualItems, &QmlObjectListModel::countChanged, this,
+            &MissionController::_complexMissionItemsCountChanged);
 
     // Connect for incremental tree model sync
     connect(_visualItems, &QAbstractItemModel::rowsInserted, this, &MissionController::_syncTreeMissionItemsInserted);
     connect(_visualItems, &QAbstractItemModel::rowsAboutToBeRemoved, this, &MissionController::_syncTreeMissionItemsAboutToBeRemoved);
     connect(_visualItems, &QAbstractItemModel::modelReset, this, &MissionController::_syncTreeMissionItemsReset);
+    connect(_visualItems, &QAbstractItemModel::modelReset, this, &MissionController::_refreshComplexMissionItems);
 
     // Populate tree's mission group from current _visualItems
     _syncTreeMissionItemsReset();
@@ -1507,6 +1582,7 @@ void MissionController::_initAllVisualItems(void)
     }
 
     emit visualItemsReset();
+    _refreshComplexMissionItems();
     emit containsItemsChanged();
     emit plannedHomePositionChanged(plannedHomePosition());
     emit homePositionSetChanged();
@@ -1530,11 +1606,14 @@ void MissionController::_deinitAllVisualItems(void)
 
     disconnect(_visualItems, &QmlObjectListModel::dirtyChanged, this, &MissionController::_visualItemsDirtyChanged);
     disconnect(_visualItems, &QmlObjectListModel::countChanged, this, &MissionController::containsItemsChanged);
+    disconnect(_visualItems, &QmlObjectListModel::countChanged, this,
+               &MissionController::_complexMissionItemsCountChanged);
 
     // Disconnect incremental tree model sync
     disconnect(_visualItems, &QAbstractItemModel::rowsInserted, this, &MissionController::_syncTreeMissionItemsInserted);
     disconnect(_visualItems, &QAbstractItemModel::rowsAboutToBeRemoved, this, &MissionController::_syncTreeMissionItemsAboutToBeRemoved);
     disconnect(_visualItems, &QAbstractItemModel::modelReset, this, &MissionController::_syncTreeMissionItemsReset);
+    disconnect(_visualItems, &QAbstractItemModel::modelReset, this, &MissionController::_refreshComplexMissionItems);
 
     // Disconnect rally controller tree model sync
     auto* rallyController = _masterController->rallyPointController();
@@ -1624,9 +1703,9 @@ void MissionController::_managerVehicleChanged(Vehicle* managerVehicle)
     connect(_missionManager, &MissionManager::resumeMissionUploadFail,  this, &MissionController::resumeMissionUploadFail);
     connect(_managerVehicle, &Vehicle::defaultCruiseSpeedChanged,       this, &MissionController::_recalcMissionFlightStatusSignal, Qt::QueuedConnection);
     connect(_managerVehicle, &Vehicle::defaultHoverSpeedChanged,        this, &MissionController::_recalcMissionFlightStatusSignal, Qt::QueuedConnection);
-    connect(_managerVehicle, &Vehicle::vehicleTypeChanged,              this, &MissionController::complexMissionItemsChanged);
+    connect(_managerVehicle, &Vehicle::vehicleTypeChanged, this, &MissionController::_refreshComplexMissionItems);
 
-    emit complexMissionItemsChanged();
+    _refreshComplexMissionItems();
     emit resumeMissionIndexChanged();
 }
 
@@ -1813,7 +1892,62 @@ void MissionController::removeAllFromVehicle(void)
 
 QVariantList MissionController::complexMissionItems(void) const
 {
-    return QGCCorePlugin::instance()->complexMissionItemNames(_controllerVehicle);
+    return _cachedComplexMissionItems;
+}
+
+void MissionController::_complexMissionItemsCountChanged(int count)
+{
+    Q_UNUSED(count);
+    _refreshComplexMissionItems();
+}
+
+void MissionController::_refreshComplexMissionItems(void)
+{
+    const QVariantList currentComplexMissionItems = _complexMissionItemsForTarget(_visualItems);
+    if (currentComplexMissionItems != _cachedComplexMissionItems) {
+        _cachedComplexMissionItems = currentComplexMissionItems;
+        emit complexMissionItemsChanged();
+    }
+}
+
+bool MissionController::_isComplexMissionItemAllowed(const QString& complexItemType,
+                                                     const QmlObjectListModel* targetVisualItems,
+                                                     QString& errorMessage) const
+{
+    errorMessage.clear();
+
+    const QmlObjectListModel* targetModel = targetVisualItems ? targetVisualItems : _visualItems;
+    if (!targetModel) {
+        errorMessage = tr("No mission model available for complex item policy evaluation.");
+        qCWarning(MissionControllerLog) << errorMessage << "type:" << complexItemType;
+        return false;
+    }
+
+    return QGCCorePlugin::instance()->canCreateComplexMissionItem(complexItemType, _masterController, targetModel,
+                                                                  errorMessage);
+}
+
+QVariantList MissionController::_complexMissionItemsForTarget(const QmlObjectListModel* targetVisualItems) const
+{
+    QVariantList filteredItems;
+    const QVariantList sourceItems = QGCCorePlugin::instance()->complexMissionItemNames(_controllerVehicle);
+    filteredItems.reserve(sourceItems.count());
+
+    for (const QVariant& itemVariant : sourceItems) {
+        const QVariantMap itemMap = itemVariant.toMap();
+        const QString itemType = itemMap.value(QStringLiteral("canonicalName")).toString();
+        if (itemType.isEmpty()) {
+            qCWarning(MissionControllerLog) << "Skipping complex mission item entry with missing canonicalName";
+            continue;
+        }
+
+        QString policyError;
+        if (_isComplexMissionItemAllowed(itemType, targetVisualItems, policyError)) {
+            filteredItems.append(itemVariant);
+        }
+    }
+
+    return filteredItems;
 }
 
 void MissionController::resumeMission(int resumeIndex)
