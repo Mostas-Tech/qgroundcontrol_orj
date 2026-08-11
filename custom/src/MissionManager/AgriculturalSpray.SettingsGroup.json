@@ -1,0 +1,64 @@
+{
+    "version": 1,
+    "fileType": "FactMetaData",
+    "QGC.MetaData.Facts": [
+        {
+            "name": "Altitude",
+            "shortDesc": "Relative altitude for every spray route waypoint.",
+            "type": "double",
+            "units": "vertical m",
+            "min": 0.0,
+            "decimalPlaces": 1,
+            "default": 50.0
+        },
+        {
+            "name": "LineSpacing",
+            "shortDesc": "Spacing between parallel spray lines.",
+            "type": "double",
+            "units": "m",
+            "min": 0.1,
+            "decimalPlaces": 2,
+            "default": 10.0
+        },
+        {
+            "name": "GridAngle",
+            "shortDesc": "Angle for parallel spray lines.",
+            "type": "double",
+            "units": "deg",
+            "min": -360.0,
+            "max": 360.0,
+            "decimalPlaces": 1,
+            "default": 0.0
+        },
+        {
+            "name": "EntryCorner",
+            "shortDesc": "Corner where the spray route starts.",
+            "type": "uint32",
+            "min": 0,
+            "max": 3,
+            "enumStrings": "Top Left,Top Right,Bottom Left,Bottom Right",
+            "enumValues": "0,1,2,3",
+            "default": 0
+        },
+        {
+            "name": "DropletClass",
+            "shortDesc": "ASABE spray droplet size class.",
+            "type": "uint32",
+            "min": 0,
+            "max": 6,
+            "enumStrings": "Very Fine,Fine,Medium,Coarse,Very Coarse,Extremely Coarse,Ultra Coarse",
+            "enumValues": "0,1,2,3,4,5,6",
+            "default": 3
+        },
+        {
+            "name": "ApplicationRate",
+            "shortDesc": "Spray application rate.",
+            "type": "double",
+            "units": "L/da",
+            "min": 0.1,
+            "max": 100.0,
+            "decimalPlaces": 1,
+            "default": 1.0
+        }
+    ]
+}

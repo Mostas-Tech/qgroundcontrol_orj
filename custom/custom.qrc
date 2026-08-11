@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/json">
+        <file alias="AgriculturalSpray.SettingsGroup.json">src/MissionManager/AgriculturalSpray.SettingsGroup.json</file>
+    </qresource>
+    <qresource prefix="/qml/Custom/Plan">
+        <file alias="AgriculturalSprayEditor.qml">src/PlanView/AgriculturalSprayEditor.qml</file>
+        <file alias="AgriculturalSprayMapVisual.qml">src/PlanView/AgriculturalSprayMapVisual.qml</file>
+    </qresource>
+</RCC>
