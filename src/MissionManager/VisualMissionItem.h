@@ -280,6 +280,9 @@ protected:
     QmlObjectListModel  _childItems;
 
 protected:
+    /// Returns true if coordinate changes should trigger terrain altitude queries.
+    virtual bool coordinateTerrainAltitudeQueryEnabled() const { return true; }
+
     void    _setBoundingCube                (QGCGeoBoundingCube bc);
 
 private slots:

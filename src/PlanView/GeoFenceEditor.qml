@@ -223,7 +223,7 @@ Rectangle {
                     anchors.right:      parent.right
                     columns:            4
                     flow:               GridLayout.TopToBottom
-                    visible:            polygonSection.checked && myGeoFenceController.circles.count > 0
+                    visible:            circleSection.checked && myGeoFenceController.circles.count > 0
 
                     QGCLabel {
                         text:               qsTr("Inclusion")

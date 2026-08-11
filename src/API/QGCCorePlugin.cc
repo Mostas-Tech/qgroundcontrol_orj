@@ -404,6 +404,19 @@ QVariantList QGCCorePlugin::complexMissionItemNames(Vehicle *vehicle)
     return items;
 }
 
+bool QGCCorePlugin::canCreateComplexMissionItem(const QString& complexItemType,
+                                                const PlanMasterController* masterController,
+                                                const QmlObjectListModel* targetVisualItems,
+                                                QString& errorMessage) const
+{
+    Q_UNUSED(complexItemType);
+    Q_UNUSED(masterController);
+    Q_UNUSED(targetVisualItems);
+
+    errorMessage.clear();
+    return true;
+}
+
 QList<PlanCreator*> QGCCorePlugin::planCreators(PlanMasterController *planMasterController)
 {
     return {

@@ -155,6 +155,11 @@ public:
     /// @return Newly created item
     Q_INVOKABLE VisualMissionItem*  insertComplexMissionItemFromKMLOrSHP(QString itemName, QString file, int visualItemIndex, bool makeCurrentItem = false);
 
+    /// Requests a plan edit layer switch using a PlanEditLayers layerInfos nodeType key.
+    /// The receiver is expected to route this through PlanViewRightPanel::selectLayer so
+    /// allowViewSwitch() is still respected by QML.
+    Q_INVOKABLE void requestPlanEditLayer(const QString& layerNodeType);
+
     Q_INVOKABLE void resumeMission(int resumeIndex);
 
     /// Updates the altitudes of the items in the current mission to the new default altitude
@@ -316,6 +321,7 @@ signals:
     void missionCruiseTimeChanged           (void);
     void missionMaxTelemetryChanged         (double missionMaxTelemetry);
     void complexMissionItemsChanged         (void);
+    void planEditLayerRequested(const QString& layerNodeType);
     void resumeMissionIndexChanged          (void);
     void resumeMissionReady                 (void);
     void resumeMissionUploadFail            (void);
@@ -346,12 +352,14 @@ private slots:
     void _recalcMissionFlightStatus             (void);
     void _progressPctChanged                    (double progressPct);
     void _visualItemsDirtyChanged               (bool dirty);
+    void _complexMissionItemsCountChanged(int count);
     void _managerSendComplete                   (bool error);
     void _managerRemoveAllComplete              (bool error);
     void _updateTimeout                         (void);
     void _complexBoundingBoxChanged             (void);
     void _recalcAll                             (void);
     void _managerVehicleChanged                 (Vehicle* managerVehicle);
+    void _refreshComplexMissionItems(void);
     void _recalcPlanViewState                   (void);
     // Incremental tree model sync slots
     void _syncTreeMissionItemsInserted                (const QModelIndex& parent, int first, int last);
@@ -388,6 +396,9 @@ private:
     void                    _insertComplexMissionItemWorker     (const QGeoCoordinate& mapCenterCoordinate, ComplexMissionItem* complexItem, int visualItemIndex, bool makeCurrentItem);
     bool                    _isROIBeginItem                     (SimpleMissionItem* simpleItem);
     bool                    _isROICancelItem                    (SimpleMissionItem* simpleItem);
+    bool _isComplexMissionItemAllowed(const QString& complexItemType, const QmlObjectListModel* targetVisualItems,
+                                      QString& errorMessage) const;
+    QVariantList _complexMissionItemsForTarget(const QmlObjectListModel* targetVisualItems) const;
     FlightPathSegment*      _createFlightPathSegmentWorker      (VisualItemPair& pair, bool mavlinkTerrainFrame);
     void                    _allItemsRemoved                    (void);
     void                    _firstItemAdded                     (void);
@@ -451,6 +462,7 @@ private:
     double                      _minAMSLAltitude =              0;
     double                      _maxAMSLAltitude =              0;
     bool                        _missionContainsVTOLTakeoff =   false;
+    QVariantList _cachedComplexMissionItems;
 
     QGroundControlQmlGlobal::AltitudeFrame _globalAltFrame = QGroundControlQmlGlobal::AltitudeFrameRelative;
 

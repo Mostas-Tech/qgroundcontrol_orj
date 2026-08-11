@@ -157,6 +157,24 @@ void VisualMissionItem::setMissionVehicleYaw(double vehicleYaw)
 
 void VisualMissionItem::_updateTerrainAltitude(void)
 {
+    if (!coordinateTerrainAltitudeQueryEnabled()) {
+        _updateTerrainTimer.stop();
+        if (_currentTerrainAtCoordinateQuery) {
+            disconnect(_currentTerrainAtCoordinateQuery, &TerrainAtCoordinateQuery::terrainDataReceived, this,
+                       &VisualMissionItem::_terrainDataReceived);
+            _currentTerrainAtCoordinateQuery = nullptr;
+        }
+        if (!qIsNaN(_terrainAltitude)) {
+            _terrainAltitude = qQNaN();
+            emit terrainAltitudeChanged(_terrainAltitude);
+        }
+        if (_terrainQueryFailed) {
+            _terrainQueryFailed = false;
+            emit terrainQueryFailedChanged(_terrainQueryFailed);
+        }
+        return;
+    }
+
     if (coordinate().latitude() == 0 && coordinate().longitude() == 0) {
         // This is an intermediate state we don't react to
         return;
@@ -178,6 +196,11 @@ void VisualMissionItem::_updateTerrainAltitude(void)
 
 void VisualMissionItem::_reallyUpdateTerrainAltitude(void)
 {
+    if (!coordinateTerrainAltitudeQueryEnabled()) {
+        _updateTerrainAltitude();
+        return;
+    }
+
     QGeoCoordinate coord = coordinate();
     if (specifiesCoordinate() && coord.isValid() && (qIsNaN(_terrainAltitude) || !QGC::fuzzyCompare(_lastLatTerrainQuery, coord.latitude()) || !QGC::fuzzyCompare(_lastLonTerrainQuery, coord.longitude()))) {
         _lastLatTerrainQuery = coord.latitude();
@@ -196,6 +219,11 @@ void VisualMissionItem::_reallyUpdateTerrainAltitude(void)
 
 void VisualMissionItem::_terrainDataReceived(bool success, QList<double> heights)
 {
+    if (!coordinateTerrainAltitudeQueryEnabled()) {
+        _updateTerrainAltitude();
+        return;
+    }
+
     _terrainAltitude = success ? heights[0] : qQNaN();
     emit terrainAltitudeChanged(_terrainAltitude);
     _currentTerrainAtCoordinateQuery = nullptr;
