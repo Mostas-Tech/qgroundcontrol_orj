@@ -14,11 +14,13 @@ baseline — anything that violates them is a finding, regardless of the checkli
 
 ## Review procedure
 
-1. Get the exact diff (`git diff master...HEAD` or the range given) and read every hunk in the
-   context of its full file — never review a hunk in isolation.
+1. Get the exact diff (`git diff master...HEAD`, the uncommitted worktree, or the range given), the
+   complete requirement checklist, and explicit product decisions. Read every hunk in full-file
+   context.
 2. Check each finding against the checklists below; cite `file:line` for every finding.
-3. Verify the gates were actually run: does `just build` succeed, does `just lint` pass, do the
-   relevant tests exist and pass? Run them if the author's claim is unverified.
+3. Trust pasted green build, lint, and test evidence; do not rerun it. If evidence is absent, report
+   the missing gate to the dispatcher rather than acting as build-ci.
+4. Report every high-confidence finding together in one pass; do not stop after the first defect.
 
 ## Golden-rule checklist (any hit = must-fix, CI will reject it anyway)
 
@@ -52,9 +54,20 @@ baseline — anything that violates them is a finding, regardless of the checkli
 
 - Behavior changes have tests (few and strong — flag redundant/tautological tests too, per
   [test/README.md](../../test/README.md) quality rules)
-- Commit messages are Conventional Commits with the correct type (`feat`/`fix`/`perf` trigger
-  releases — flag a `feat` that is really a `chore`)
+- When commits are part of the review, their messages are Conventional Commits with the correct
+  type (`feat`/`fix`/`perf` trigger releases). Do not flag absent commits in an uncommitted
+  worktree.
 - Change is focused: one concern per PR
+
+## Cost discipline
+
+- Never spawn a nested agent, reviewer, or validation task. The dispatcher alone routes work.
+- Treat explicit product decisions as constraints, not findings, unless they conflict with a
+  documented invariant or create a concrete defect.
+- Trust real green gate evidence. Review the complete diff and requirement checklist once, then
+  report all high-confidence findings together.
+- Re-review at most one failure-driven fix cycle through the existing reviewer context. If issues
+  remain, return the full set to the dispatcher for escalation.
 
 ## Output format
 
