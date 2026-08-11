@@ -11,6 +11,77 @@ Instructions for AI coding agents (Codex, Claude Code, etc.) working on QGroundC
 - [.github/ci-overview.md](.github/ci-overview.md) — CI workflow/action/script layout and conventions
 - [.pre-commit-config.yaml](.pre-commit-config.yaml) — All enforced linters (clang-format, clang-tidy, ruff, pyright, shellcheck, actionlint, zizmor, qmllint, clazy, vehicle-null-check, check-no-qassert, check-no-qtest-ignore-message)
 
+## Custom Build Policy — stay mergeable with upstream (company rule #1)
+
+This is a **company build** of QGroundControl. We must keep receiving upstream QGC features and
+fixes, so upstream merges have to stay near-conflict-free. QGC ships a first-class mechanism for
+exactly this — the [custom build overlay](https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/custom_build/custom_build.html):
+a `custom/` directory at the repo root is auto-detected by CMake (`QGC_CUSTOM_DIR` in
+`cmake/CustomOptions.cmake`; detection + `add_subdirectory` in the root `CMakeLists.txt`), which
+loads `custom/cmake/CustomOverrides.cmake` and builds the overlay. `custom-example/` is upstream's
+reference template — copy patterns from it; never modify it.
+
+**Default rule: company-specific changes live in `custom/`, not in upstream `src/`.**
+
+Where a change goes:
+
+1. **Branding** (app name, icons, package ids, installer art) →
+   `custom/cmake/CustomOverrides.cmake` + `custom/res/`, `custom/deploy/`, `custom/android/`.
+2. **Behavior & UI** → subclass overrides in `custom/src/`: `CustomPlugin : QGCCorePlugin`
+   (plus `QGCOptions` / `QGCFlyViewOptions`) for settings visibility, toolbar, indicators,
+   fly-view overlay; custom QML modules registered from the plugin
+   (`src/API/QGCCorePlugin.h` and `src/API/QGCOptions.h` define the override surface — read them
+   before concluding something "can't" be done in the overlay).
+3. **Replacing stock QML/images** → resource overrides via `custom/custom.qrc` + the QML URL
+   interceptor (see `CustomOverrideInterceptor` in `custom-example/src/CustomPlugin.cc`) — never
+   edit the upstream file to restyle it.
+4. **Firmware scope/behavior** → custom `FirmwarePluginFactory` / `FirmwarePlugin` subclass in
+   `custom/src/`; restrict flight stacks via `QGC_DISABLE_APM_PLUGIN_FACTORY` /
+   `QGC_DISABLE_PX4_PLUGIN_FACTORY` in `CustomOverrides.cmake`.
+5. **Genuine bug fixes / improvements that upstream QGC would also want** → these MAY edit `src/`
+   directly. Keep them minimal, upstream-style, and self-contained — they are candidates for
+   upstream PRs.
+6. **Missing hook?** When the overlay can't express a change because no extension point exists,
+   add the *smallest possible* extension point to `src/` (a virtual method, `Q_PROPERTY`, or
+   `QGCOptions` flag) in its own commit, then implement the company behavior in `custom/` on top
+   of it.
+
+Hard rules (code-reviewer treats violations as must-fix):
+
+- Never hard-code company names, branding, or business logic in `src/`; never scatter
+  company-specific `#ifdef`s/conditionals through upstream code.
+- Never mix `custom/` and `src/` edits in the same commit — company-facing and upstream-facing
+  changes must stay separable for upstream syncs (use scopes, e.g. `feat(custom): ...` vs
+  `fix(Vehicle): ...`).
+- Before editing any file under `src/`, ask: *could upstream ship a conflicting change here, and
+  is this edit company-specific?* If both, it belongs in `custom/` via the mechanisms above.
+- Standard QGC runs in Advanced Mode always; custom builds start in regular mode — hide
+  vendor-preconfigured setup UI via `QGCOptions`, don't delete it.
+
+## Custom Agents (use these for task work)
+
+Task-specific agent definitions live in [.github/agents/](.github/agents/README.md) — the
+**canonical source**, used directly by VS Code Copilot (Claude and OpenAI models alike). Claude
+Code invokes the same agents through thin wrappers in `.claude/agents/`, which only point back to
+the canonical files.
+
+| Agent | Use for |
+| ----- | ------- |
+| `cpp-core` | C++/Qt feature work and bug fixes |
+| `qml-ui` | Any user-facing QML change |
+| `test-engineer` | Writing/extending tests, fixing flaky tests |
+| `code-reviewer` | Pre-merge review of every branch (read-only) |
+| `build-ci` | Build breakage, lint/pre-commit failures, GitHub Actions failures |
+
+Rules for the agent files themselves:
+
+- Every agent operates **under this AGENTS.md** — agent files add task-specific guidance on top of
+  these rules, never instead of them.
+- To change an agent, edit `.github/agents/<name>.agent.md`. Never put rules only in the
+  `.claude/agents/` wrapper — it must stay a pointer.
+- Adding/renaming an agent requires updating both directories plus the table above and the one in
+  [.github/agents/README.md](.github/agents/README.md).
+
 ## Golden Rules (enforced — violations fail CI)
 
 These are the non-negotiables. The first four are QGC's core architecture patterns; the rest are

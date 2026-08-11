@@ -167,8 +167,9 @@ Qt*-linux*.tar.*
 # Local Development Tools
 # ------------------------------------------------------------------------------
 
-# AI Assistants
-.claude/
+# AI Assistants (shared agent definitions in .claude/agents/ are tracked)
+.claude/*
+!.claude/agents/
 .gemini/
 .geminiignore
 .cursorignore
