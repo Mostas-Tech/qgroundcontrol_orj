@@ -1,23 +1,13 @@
-# QGroundControl Ground Control Station
+# Custom Build Overlay
 
-## Custom Build Example
+Company custom build overlay, auto-detected by CMake (`QGC_CUSTOM_DIR`).
 
-To build this sample custom version:
+This is currently a **neutral baseline**: `CustomPlugin` is a pass-through
+`QGCCorePlugin` subclass with no overrides, so the resulting application looks
+and behaves identical to stock QGroundControl. Company branding and behavior
+changes land here incrementally.
 
-1. Clean your build directory of any previous build.
-2. Rename `custom-example` to `custom`.
-3. `cd custom` and build QGC.
+Reference template with example customizations: [`custom-example/`](../custom-example/README.md).
 
-![Custom Build Screenshot](README.jpg)
-
-See the [QGC Dev Guide](https://dev.qgroundcontrol.com/en/custom_build/custom_build.html) for what a
-custom build is and how to create your own.
-
-This example demonstrates:
-
-- **Off-the-shelf commercial vehicle** — most vehicle setup is hidden (pre-configured by the vendor),
-  giving a simpler UI; the full experience stays available in **Advanced Mode**.
-- **Custom branding** — images and color palette matching a corporate identity.
-- **Custom interface** — e.g. a custom instrument widget replacing the standard QGC UI (see screenshot).
-- **Overridden application settings** — hides options users shouldn't change and adjusts defaults.
-- **Fully commented source** explaining what it does and why.
+After changing `cmake/CustomOverrides.cmake`, wipe the build directory —
+overrides are written to the CMake cache with `FORCE` and survive reconfigures.
