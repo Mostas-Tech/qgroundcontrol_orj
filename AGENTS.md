@@ -72,6 +72,7 @@ the canonical files.
 | `test-engineer` | Writing/extending tests, fixing flaky tests |
 | `code-reviewer` | Pre-merge review of every branch (read-only) |
 | `build-ci` | Build breakage, lint/pre-commit failures, GitHub Actions failures |
+| `dispatcher` | Orchestrating a whole job across the other agents (Claude Code: `/dispatch`) |
 
 Rules for the agent files themselves:
 
