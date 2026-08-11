@@ -49,12 +49,24 @@ this file adds task-specific guidance on top of them, never instead of them.
 1. Decide where the change belongs first — `custom/` overlay for company-specific work, `src/` only
    for upstream-valid changes (see hard rule #1). Then locate the owning module and read the
    neighboring code.
-2. Implement in small increments — run `just build` every few file edits, not just at the end; fix
-   build errors before continuing.
-3. Add or extend tests for behavior changes (delegate to the **test-engineer** agent for non-trivial
-   test work) and iterate with `ctest -R <TestName>`.
-4. Before declaring done: `just build` succeeds, `just lint` passes, relevant `ctest -R` passes.
-5. Commit as Conventional Commits, e.g. `fix(Vehicle): guard null activeVehicle in telemetry handler`.
+2. Make one coherent implementation batch, then compile once with the exact existing-tree command
+   supplied by the dispatcher. Rebuild only after a failure-driven fix.
+3. Report the changed behavior and required test surface to the dispatcher; only the dispatcher
+   routes the test-engineer.
+4. Forward real command evidence and run only missing role-owned checks. Do not repeat a green
+   build, test, or lint result.
+5. Commit as Conventional Commits only when requested, e.g.
+   `fix(Vehicle): guard null activeVehicle in telemetry handler`.
+
+## Cost discipline
+
+- Never spawn a nested agent or reviewer. Return follow-up work to the dispatcher.
+- Reuse the probed environment and configured build tree. Do not configure another tree or install
+  tools unless that is the explicit task.
+- Inspect the assigned area once, batch related edits, and avoid rediscovering files or commands
+  already provided in the prompt.
+- A concrete compile failure permits a focused fix and one rebuild; a green compile is final
+  evidence for this role.
 
 Keep changes focused and minimal — no drive-by refactors, no commented-out code, no unrelated
 formatting churn. Another agent reviews your output before it is accepted.

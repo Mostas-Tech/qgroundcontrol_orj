@@ -47,12 +47,23 @@ this file adds task-specific guidance on top of them, never instead of them.
 ## Workflow
 
 1. Find the closest existing screen or control and copy its structure.
-2. Run `just build` after wiring new files into CMake; QML-only edits still need a build to catch
-   qmlcachegen/registration errors.
-3. `just lint` runs qmllint — it must pass; fix warnings instead of suppressing them.
+2. Make one coherent UI batch, then run the provided existing-tree build command once after wiring
+   new files into CMake; QML-only edits still need qmlcachegen/registration validation.
+3. Run the provided QML lint command once; fix warnings instead of suppressing them. Repeat a
+   command only after a failure-driven fix.
 4. Verify the screen in the running app when feasible; state plainly what you did and did not
    visually verify.
-5. Commit as Conventional Commits, e.g. `feat(FlyView): add wind indicator to instrument panel`.
+5. Commit as Conventional Commits only when requested, e.g.
+   `feat(FlyView): add wind indicator to instrument panel`.
+
+## Cost discipline
+
+- Never spawn a nested C++ agent, test agent, or reviewer. Describe cross-owner work to the
+  dispatcher for routing.
+- Reuse the environment, configured build tree, commands, and green evidence supplied in the
+  prompt. Do not configure another tree or install tools.
+- Inspect sibling UI once, batch related edits, and perform one role-owned build/lint pass. Do not
+  rerun validation another owner already proved.
 
 Keep diffs minimal and match the surrounding code's comment density (QML files are mostly
 comment-free — keep them that way).

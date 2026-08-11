@@ -10,6 +10,8 @@ Instructions for AI coding agents (Codex, Claude Code, etc.) working on QGroundC
 - [test/README.md](test/README.md) — Test framework, base classes, CTest labels, MultiSignalSpy, coverage
 - [.github/ci-overview.md](.github/ci-overview.md) — CI workflow/action/script layout and conventions
 - [.pre-commit-config.yaml](.pre-commit-config.yaml) — All enforced linters (clang-format, clang-tidy, ruff, pyright, shellcheck, actionlint, zizmor, qmllint, clazy, vehicle-null-check, check-no-qassert, check-no-qtest-ignore-message)
+- [.github/instructions/learnings.instructions.md](.github/instructions/learnings.instructions.md) — Verified cross-session pitfalls and process corrections
+- [.github/skills/windows-dev-env/SKILL.md](.github/skills/windows-dev-env/SKILL.md) — Verified commands and paths for this Windows development machine
 
 ## Custom Build Policy — stay mergeable with upstream (company rule #1)
 
@@ -126,8 +128,11 @@ src/
 
 ## Build & Test Commands
 
-The `just` recipes are the canonical workflow — see [tools/README.md](tools/README.md) for the full list.
-[.github/ci-overview.md](.github/ci-overview.md) documents how CI invokes builds and tests; match CI, don't guess.
+The `just` recipes are the canonical workflow where they are available — see
+[tools/README.md](tools/README.md) for the full list. On the verified Windows development machine,
+read [.github/skills/windows-dev-env/SKILL.md](.github/skills/windows-dev-env/SKILL.md) first and
+reuse its configured build tree. [.github/ci-overview.md](.github/ci-overview.md) documents how CI
+invokes builds and tests; match CI, don't guess.
 
 ```bash
 just configure          # CMake configure (pulls submodules first)
@@ -139,18 +144,23 @@ just format-fix         # apply clang-format / ruff-format
 just info               # print resolved versions (Qt, CMake, GStreamer)
 ```
 
-- **Build incrementally** — rebuild every few file edits during multi-file C++/Qt work, not just at the end; fix build errors before continuing.
+- **Build coherent batches** — compile once after a coherent implementation batch; rebuild only
+  after a failure-driven fix.
 - **Tight test loops** — iterate one test with `ctest -R <name>` (or `--gtest_filter`); only run the full label on the final pass. CI runs `ctest --output-on-failure -L Unit`.
 - **Match CI** — before running tests/lint locally, use the same command CI runs ([.github/ci-overview.md](.github/ci-overview.md)), not a local guess.
+- **Reuse evidence** — in dispatched jobs, each owner runs its gate once and forwards the real
+  command output; other agents do not rerun a green gate.
 
 ## Definition of Done
 
 Before considering a change complete:
 
-1. `just build` succeeds.
-2. `just lint` (or `pre-commit run --all-files` for the full sweep) passes.
-3. Relevant tests pass (`ctest -R <name>` for the touched area; full `-L Unit` on the final pass).
-4. Commit message follows Conventional Commits (below).
+1. Where available, the canonical `just build` and `just lint` gates pass. Where they are
+   unavailable, use the documented platform fallback (on the verified Windows machine, see
+   [.github/skills/windows-dev-env/SKILL.md](.github/skills/windows-dev-env/SKILL.md)).
+2. Targeted relevant tests pass (`ctest -R <name>` for the touched area).
+3. Run the full `-L Unit` suite only when the job or CI explicitly requests it.
+4. When a commit is requested, its message follows Conventional Commits (below).
 
 ## Commit & Review Conventions
 

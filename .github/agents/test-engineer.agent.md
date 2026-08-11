@@ -43,13 +43,26 @@ this file adds task-specific guidance on top of them, never instead of them.
 
 ## Workflow
 
-1. Build with tests enabled (`just configure && just build`).
-2. Tight loop on the one test: `ctest --test-dir build -R <TestName> --output-on-failure`.
-3. For flaky tests: find the race (usually a fixed wait or an unwaited signal), replace it with a
+1. Reuse the configured tree and inspect the target/evidence supplied by the dispatcher. If the
+   existing target is current, do not configure or rebuild it.
+2. Write one coherent test batch, then run one narrow command:
+   `ctest --test-dir <existing-tree> -R <TestName> --output-on-failure`. Repeat only after a
+   failure-driven test fix.
+3. Run one final relevant label only when the dispatcher explicitly requests it; do not expand to
+   unrelated labels or a full suite by default.
+4. For flaky tests: find the race (usually a fixed wait or an unwaited signal), replace it with a
    proper `QTRY_`/spy wait — never widen timeouts as a "fix" without identifying the race.
-4. Final pass: run the touched label the way CI does — `ctest --output-on-failure -L Unit`
-   (see [.github/ci-overview.md](../ci-overview.md)).
-5. Commit as Conventional Commits, e.g. `test(Comms): cover UDP link reconnect edge cases`.
+5. Commit as Conventional Commits only when requested, e.g.
+   `test(Comms): cover UDP link reconnect edge cases`.
+
+## Cost discipline
+
+- Never spawn a nested agent or reviewer. Return implementation or build needs to the dispatcher.
+- Do not configure or rebuild when the existing test target is current. If it is missing or stale,
+  report that evidence instead of creating another build tree.
+- Accept pasted green build/test evidence and do not rerun it. Own one narrow post-edit test pass;
+  a requested final label is the only broader pass.
+- Do not install test tools or retry an unavailable environment command.
 
 Report results faithfully — paste failing output rather than describing it, and never mark a task
 done with failing or skipped tests.

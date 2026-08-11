@@ -19,8 +19,14 @@ this file adds task-specific guidance on top of them, never instead of them.
 3. [.pre-commit-config.yaml](../../.pre-commit-config.yaml) — every enforced linter and custom hook
    (clang-format, clang-tidy, ruff, pyright, shellcheck, actionlint, zizmor, qmllint, clazy,
    vehicle-null-check, check-no-qassert, check-no-qtest-ignore-message, check-no-fixed-qwait)
+4. [.github/skills/windows-dev-env/SKILL.md](../skills/windows-dev-env/SKILL.md) — verified local
+   Windows paths, configured tree, and commands
 
 ## Toolbox
+
+These commands apply where their tools are available. On the verified Windows machine, read the
+`windows-dev-env` skill first; its local `.env` and MSVC runner make the same `just` commands work
+without manually activating Visual Studio, Qt, or GStreamer environments.
 
 ```bash
 just info               # resolved Qt / CMake / GStreamer versions — check first on env issues
@@ -30,6 +36,7 @@ just lint               # fast pre-commit gate
 pre-commit run --all-files   # full lint sweep, same as CI
 just format-fix         # apply clang-format / ruff-format instead of hand-formatting
 just test               # ctest LABELS="Unit|Integration" EXCLUDE="Flaky|Network"
+just test-one <regex>   # one targeted CTest selection
 ctest --output-on-failure -L Unit   # exactly what CI runs
 ```
 
@@ -41,8 +48,9 @@ ctest --output-on-failure -L Unit   # exactly what CI runs
   timeout, disabling a hook, or adding `// NOLINT` — the custom hooks (vehicle-null-check,
   check-no-qassert, ...) encode architecture rules; a hit means the code is wrong, not the hook.
 - Formatting failures: run `just format-fix`, never hand-align to satisfy clang-format.
-- Stale-state suspicion (weird CMake/moc errors): reconfigure before reaching for a clean build; a
-  full clean rebuild is the last resort, and say so when you do it.
+- Stale-state suspicion (weird CMake/moc errors): inspect `CMakeCache.txt` and the supplied command
+  first. Do not reconfigure or clean unless the failure proves it necessary and reconfiguration is
+  explicitly in scope.
 - Workflow changes (`.github/workflows/`, `actions/`, `scripts/`) must keep actionlint and zizmor
   green and follow the layout conventions in ci-overview.md.
 - Submodule drift is a common breakage source — `just configure` pulls submodules; check
@@ -54,8 +62,22 @@ ctest --output-on-failure -L Unit   # exactly what CI runs
   (app name, icons, disabled plugin factories) are fixed in `CustomOverrides.cmake`, never by
   editing upstream CMake defaults.
 
+## Cost discipline
+
+- Never spawn a nested agent or reviewer. Return code-owner fixes to the dispatcher.
+- Own one final gate pass using the probed commands and configured tree. Accept green command
+  evidence from earlier stages; do not rerun it.
+- Never install tools or reconfigure because an optional tool is missing unless explicitly tasked.
+  Report **environment unavailable** separately from **code failure**.
+- Record an unavailable command once and never retry the same failing environment command. Use the
+  documented available fallback or report the blocked gate.
+- Reuse one configured build tree. A concrete code failure permits a focused owner fix and one
+  rerun of the failed command, not a new tree or a full validation sweep.
+
 ## Definition of done
 
-The originally failing command passes, `just lint` passes, and nothing unrelated was touched.
-Report what the root cause was in one sentence, then the fix. Commit as Conventional Commits with
-type `build` or `ci`, e.g. `ci(actions): pin GStreamer version in linux workflow`.
+The originally failing command and requested gate pass, or an unavailable environment gate is
+reported accurately without being mislabeled as a code failure. Nothing unrelated was touched.
+Report the root cause in one sentence, then the fix. Commit only when requested, using
+Conventional Commit type `build` or `ci`, e.g.
+`ci(actions): pin GStreamer version in linux workflow`.
