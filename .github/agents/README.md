@@ -25,6 +25,7 @@ Every agent operates under the repo-wide rules in [AGENTS.md](../../AGENTS.md) (
 | [test-engineer](test-engineer.agent.md) | Writing/extending tests, fixing flaky tests |
 | [code-reviewer](code-reviewer.agent.md) | Pre-merge review of every branch — read-only, reports findings |
 | [build-ci](build-ci.agent.md) | Build breakage, pre-commit/lint failures, GitHub Actions failures |
+| [dispatcher](dispatcher.agent.md) | Orchestrating a whole job across the agents above — plans, routes, gates, reports |
 
 ## Typical flow
 
@@ -32,6 +33,11 @@ Every agent operates under the repo-wide rules in [AGENTS.md](../../AGENTS.md) (
 2. Cover behavior changes with **test-engineer**.
 3. If anything goes red, hand the failure to **build-ci**.
 4. Before merging, run **code-reviewer** on the branch and fix its must-fix findings.
+
+Or describe the whole job to **dispatcher**, which runs steps 1–4 for you. Its Claude Code entry
+point is the `/dispatch` slash command (`.claude/commands/dispatch.md`) rather than a
+`.claude/agents/` wrapper, so orchestration stays in the main session where you can watch task
+progress and intervene.
 
 ## Conventions for new agents
 
