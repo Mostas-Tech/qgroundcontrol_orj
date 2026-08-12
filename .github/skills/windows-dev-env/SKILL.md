@@ -43,13 +43,15 @@ The repaired tree was verified with consecutive no-op builds (`ninja: no work to
 2.5 seconds). If the dependency database is interrupted again, compact it once with
 `ninja -C build-spray-msvc -t recompact`; do not delete the tree.
 
-## Debug console launch
+## Debug GUI launch
 
-Launch the Debug console build with:
+Launch the Debug GUI build with:
 
 ```powershell
 just run
 ```
 
-This launch path was verified to keep `QGroundControl-console.exe` running. If launch fails, report
-the environment error once; do not rebuild or reconfigure to address a missing runtime DLL.
+The current Windows CMake target is the `WIN32` target `QGroundControl`, which produces
+`build-spray-msvc\Debug\QGroundControl.exe`; `just run` launches that executable unless
+`QGC_EXECUTABLE` overrides it. If launch fails, report the environment error once; do not rebuild
+or reconfigure to address a missing runtime DLL.

@@ -16,7 +16,7 @@ qt_arch := if os_family() == "windows" { "msvc2022_64" } else { "gcc_64" }
 qt_dir := env_var_or_default("QT_DIR", home_directory() / "Qt" / qt_version / qt_arch)
 build_type := env_var_or_default("BUILD_TYPE", "Debug")
 build_dir := env_var_or_default("BUILD_DIR", "build")
-qgc_executable := env_var_or_default("QGC_EXECUTABLE", build_dir / build_type / if os_family() == "windows" { "QGroundControl-console.exe" } else { "QGroundControl" })
+qgc_executable := env_var_or_default("QGC_EXECUTABLE", build_dir / build_type / if os_family() == "windows" { "QGroundControl.exe" } else { "QGroundControl" })
 environment_runner := python + " ./tools/setup/run_with_msvc.py --"
 # Use all cores by default; override with JOBS=N.
 jobs := env_var_or_default("JOBS", num_cpus())

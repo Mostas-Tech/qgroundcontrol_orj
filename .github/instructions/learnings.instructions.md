@@ -19,6 +19,10 @@ of the matching section (create a section if needed). Keep entries actionable an
 - Debug executables exit immediately with `0xC0000135` (missing DLL) unless both the Qt `bin`
   directory and the GStreamer `sdk\bin` directory are on `PATH`, `GST_PLUGIN_PATH` is set, and the
   Visual Studio Debug environment is active. `just run` now supplies all three automatically.
+- On this Windows tree, CMake defines the `WIN32` target `QGroundControl`, producing
+  `build-spray-msvc\Debug\QGroundControl.exe`. `just run` must default to that GUI executable
+  (while allowing `QGC_EXECUTABLE` to override it), not the obsolete
+  `QGroundControl-console.exe`, which can be stale.
 - Standalone QtTest harnesses compile fine with MSVC via `qt-cmake` + Ninja; clang-repl/JIT
   approaches fail against Qt/MSVC symbols (`Symbols not found: __std_max_element_d`) — don't
   retry them.
