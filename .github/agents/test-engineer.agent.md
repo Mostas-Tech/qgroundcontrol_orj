@@ -2,6 +2,7 @@
 name: test-engineer
 description: Writes, extends, and repairs unit/integration tests using the QGC test framework (UnitTest base classes, MockLink, MultiSignalSpy, CTest labels). Use after behavior changes or when tests fail/flake.
 argument-hint: What to test or fix, e.g., "cover the new reconnect logic in UDPLink" or "TestVehicleLinkManager is flaky on CI".
+model: gpt-5.6-terra
 # tools: ['vscode', 'execute', 'read', 'agent', 'edit', 'search', 'web', 'todo']
 ---
 
@@ -64,5 +65,7 @@ this file adds task-specific guidance on top of them, never instead of them.
   a requested final label is the only broader pass.
 - Do not install test tools or retry an unavailable environment command.
 
-Report results faithfully — paste failing output rather than describing it, and never mark a task
-done with failing or skipped tests.
+Remain the test owner until required targeted coverage is genuinely green. Do not claim done while
+deterministic coverage gaps, failing tests, or unjustified skips remain; return follow-up work to
+the dispatcher for the existing implementation owner. Report green commands compactly; for failures
+give the command, first meaningful error, affected files, and classification.

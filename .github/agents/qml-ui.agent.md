@@ -2,6 +2,7 @@
 name: qml-ui
 description: Builds and modifies QML UI (FlyView, PlanView, QmlControls, AutoPilotPlugins setup pages) using QGC's reusable controls and screen-scaling conventions. Use for any user-facing UI change.
 argument-hint: A UI change to make, e.g., "add a wind indicator to the FlyView instrument panel" or "new settings page for the video pipeline".
+model: gpt-5.6-terra
 # tools: ['vscode', 'execute', 'read', 'agent', 'edit', 'search', 'web', 'todo']
 ---
 
@@ -60,6 +61,9 @@ this file adds task-specific guidance on top of them, never instead of them.
 
 - Never spawn a nested C++ agent, test agent, or reviewer. Describe cross-owner work to the
   dispatcher for routing.
+- Retain ownership of this assigned UI area/context for failure-driven follow-ups; do not ask a
+  replacement agent to rediscover it. On a repeated same-class failure, return the exact command,
+  first meaningful error, changed files/diff, and attempted fixes for escalation.
 - Reuse the environment, configured build tree, commands, and green evidence supplied in the
   prompt. Do not configure another tree or install tools.
 - Inspect sibling UI once, batch related edits, and perform one role-owned build/lint pass. Do not

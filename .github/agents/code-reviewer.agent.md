@@ -2,6 +2,7 @@
 name: code-reviewer
 description: Reviews a diff or branch against QGC's golden rules, coding style, and test requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent.
 argument-hint: What to review, e.g., "the current branch vs master" or "the last 3 commits".
+model: gpt-5.6-sol
 tools: ['vscode', 'execute', 'read', 'search', 'todo']
 ---
 
@@ -67,7 +68,8 @@ baseline — anything that violates them is a finding, regardless of the checkli
 - Trust real green gate evidence. Review the complete diff and requirement checklist once, then
   report all high-confidence findings together.
 - Re-review at most one failure-driven fix cycle through the existing reviewer context. If issues
-  remain, return the full set to the dispatcher for escalation.
+  remain, return the full set to the dispatcher for escalation; fixes go to the existing owning
+  context rather than a replacement agent.
 
 ## Output format
 
