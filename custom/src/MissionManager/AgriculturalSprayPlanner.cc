@@ -41,9 +41,33 @@ struct GridFrame
     }
 };
 
+struct GridBounds
+{
+    double minimumAlong = std::numeric_limits<double>::infinity();
+    double maximumAlong = -std::numeric_limits<double>::infinity();
+    double minimumAcross = std::numeric_limits<double>::infinity();
+    double maximumAcross = -std::numeric_limits<double>::infinity();
+};
+
+struct PreparedEdge
+{
+    Point first;
+    Point second;
+    GridBounds bounds;
+};
+
+struct CircleNavigation
+{
+    Point center;
+    double radius = 0.0;
+};
+
 struct PreparedShape
 {
     std::vector<Point> vertices;
+    std::vector<PreparedEdge> edges;
+    GridBounds bounds;
+    std::optional<CircleNavigation> circleNavigation;
     bool inclusion = false;
 };
 
@@ -78,13 +102,19 @@ enum class TransitStatus
 {
     Found,
     NoRoute,
-    ComplexityLimit,
 };
 
 struct TransitResult
 {
     TransitStatus status = TransitStatus::NoRoute;
     std::vector<Point> points;
+};
+
+struct Roadmap
+{
+    std::vector<Point> nodes;
+    std::vector<std::vector<std::size_t>> edges;
+    std::vector<std::size_t> components;
 };
 
 [[nodiscard]] bool finiteCoordinate(double value)
@@ -303,6 +333,42 @@ struct TransitResult
     return vertices;
 }
 
+[[nodiscard]] GridBounds gridBounds(const std::vector<Point>& vertices, const GridFrame& frame)
+{
+    GridBounds bounds;
+    for (const Point& vertex : vertices) {
+        const double along = frame.along(vertex);
+        const double across = frame.across(vertex);
+        bounds.minimumAlong = std::min(bounds.minimumAlong, along);
+        bounds.maximumAlong = std::max(bounds.maximumAlong, along);
+        bounds.minimumAcross = std::min(bounds.minimumAcross, across);
+        bounds.maximumAcross = std::max(bounds.maximumAcross, across);
+    }
+    return bounds;
+}
+
+[[nodiscard]] bool pointLexicographicallyLess(const Point& left, const Point& right)
+{
+    return left.north == right.north ? left.east < right.east : left.north < right.north;
+}
+
+[[nodiscard]] PreparedShape prepareShape(std::vector<Point> vertices, bool inclusion, const GridFrame& frame,
+                                         const std::optional<CircleNavigation>& circleNavigation = std::nullopt)
+{
+    PreparedShape shape;
+    shape.vertices = std::move(vertices);
+    shape.bounds = gridBounds(shape.vertices, frame);
+    shape.circleNavigation = circleNavigation;
+    shape.inclusion = inclusion;
+    shape.edges.reserve(shape.vertices.size());
+    for (std::size_t index = 0; index < shape.vertices.size(); ++index) {
+        const Point& first = shape.vertices[index];
+        const Point& second = shape.vertices[(index + 1) % shape.vertices.size()];
+        shape.edges.push_back({first, second, gridBounds({first, second}, frame)});
+    }
+    return shape;
+}
+
 [[nodiscard]] bool prepareShapes(const PlannerInput& input, PreparedInput& prepared, std::string& error)
 {
     if (input.inclusions.empty()) {
@@ -318,7 +384,8 @@ struct TransitResult
     }
     if (input.inclusions.size() + input.exclusions.size() > input.limits.maxShapes || input.limits.maxShapes == 0 ||
         input.limits.maxShapeVertices < 3 || input.limits.maxScanLines == 0 || input.limits.maxSprayLegs == 0 ||
-        input.limits.maxVisibilityNodes < 2 || input.limits.maxRoutePoints == 0) {
+        input.limits.maxVisibilityNodes < 2 || input.limits.maxTopologyRepresentatives == 0 ||
+        input.limits.maxRoutePoints == 0) {
         error = "planner limits are invalid or shape count exceeds the limit";
         return false;
     }
@@ -331,6 +398,7 @@ struct TransitResult
     auto appendShapes = [&](const std::vector<Shape>& shapes, bool inclusion, std::vector<PreparedShape>& target) {
         for (const Shape& shape : shapes) {
             std::vector<Point> vertices;
+            std::optional<CircleNavigation> circleNavigation;
             if (const auto* polygon = std::get_if<Polygon>(&shape)) {
                 if (!validPolygon(*polygon, input.limits, error)) {
                     return false;
@@ -345,8 +413,12 @@ struct TransitResult
                     return false;
                 }
                 vertices = *approximation;
+                if (!inclusion) {
+                    const double outerRadius = distance(circle.center, vertices.front());
+                    circleNavigation = {{circle.center, outerRadius}};
+                }
             }
-            target.push_back({std::move(vertices), inclusion});
+            target.push_back(prepareShape(std::move(vertices), inclusion, prepared.frame, circleNavigation));
         }
         return true;
     };
@@ -377,21 +449,53 @@ struct TransitResult
     return inside;
 }
 
+[[nodiscard]] bool boundsContain(const GridBounds& bounds, double along, double across)
+{
+    const double tolerance = coordinateTolerance(std::max({1.0, std::abs(along), std::abs(across),
+                                                           std::abs(bounds.minimumAlong), std::abs(bounds.maximumAlong),
+                                                           std::abs(bounds.minimumAcross), std::abs(bounds.maximumAcross)}));
+    return along >= bounds.minimumAlong - tolerance && along <= bounds.maximumAlong + tolerance &&
+           across >= bounds.minimumAcross - tolerance && across <= bounds.maximumAcross + tolerance;
+}
+
+[[nodiscard]] bool boundsCrossScanline(const GridBounds& bounds, double across)
+{
+    const double tolerance =
+        coordinateTolerance(std::max({1.0, std::abs(across), std::abs(bounds.minimumAcross), std::abs(bounds.maximumAcross)}));
+    return across >= bounds.minimumAcross - tolerance && across <= bounds.maximumAcross + tolerance;
+}
+
+[[nodiscard]] bool boundsOverlap(const GridBounds& first, const GridBounds& second)
+{
+    const double tolerance = coordinateTolerance(
+        std::max({1.0, std::abs(first.minimumAlong), std::abs(first.maximumAlong), std::abs(first.minimumAcross),
+                  std::abs(first.maximumAcross), std::abs(second.minimumAlong), std::abs(second.maximumAlong),
+                  std::abs(second.minimumAcross), std::abs(second.maximumAcross)}));
+    return first.minimumAlong <= second.maximumAlong + tolerance && first.maximumAlong + tolerance >= second.minimumAlong &&
+           first.minimumAcross <= second.maximumAcross + tolerance && first.maximumAcross + tolerance >= second.minimumAcross;
+}
+
 [[nodiscard]] bool pointInEffectiveRegion(const Point& point, const PreparedInput& prepared)
 {
     if (!finitePoint(point)) {
         return false;
     }
 
+    const double along = prepared.frame.along(point);
+    const double across = prepared.frame.across(point);
     const bool included =
         std::any_of(prepared.inclusions.begin(), prepared.inclusions.end(),
-                    [&point](const PreparedShape& shape) { return pointInPolygon(point, shape.vertices); });
+                    [&point, along, across](const PreparedShape& shape) {
+                        return boundsContain(shape.bounds, along, across) && pointInPolygon(point, shape.vertices);
+                    });
     if (!included) {
         return false;
     }
 
     return std::none_of(prepared.exclusions.begin(), prepared.exclusions.end(),
-                        [&point](const PreparedShape& shape) { return pointInPolygon(point, shape.vertices); });
+                        [&point, along, across](const PreparedShape& shape) {
+                            return boundsContain(shape.bounds, along, across) && pointInPolygon(point, shape.vertices);
+                        });
 }
 
 [[nodiscard]] std::vector<Interval> normalizeIntervals(std::vector<Interval> intervals)
@@ -418,14 +522,21 @@ struct TransitResult
     return normalized;
 }
 
-[[nodiscard]] std::optional<std::vector<Interval>> polygonIntervals(const std::vector<Point>& polygon,
+[[nodiscard]] std::optional<std::vector<Interval>> polygonIntervals(const PreparedShape& shape,
                                                                     const GridFrame& frame, double across)
 {
+    if (!boundsCrossScanline(shape.bounds, across)) {
+        return std::vector<Interval>{};
+    }
+
     std::vector<double> intersections;
-    intersections.reserve(polygon.size());
-    for (std::size_t index = 0; index < polygon.size(); ++index) {
-        const Point& first = polygon[index];
-        const Point& second = polygon[(index + 1) % polygon.size()];
+    intersections.reserve(shape.edges.size());
+    for (const PreparedEdge& edge : shape.edges) {
+        if (!boundsCrossScanline(edge.bounds, across)) {
+            continue;
+        }
+        const Point& first = edge.first;
+        const Point& second = edge.second;
         const double firstAcross = frame.across(first);
         const double secondAcross = frame.across(second);
         const bool crosses =
@@ -463,19 +574,22 @@ struct TransitResult
             std::nextafter(std::max(first, second), std::numeric_limits<double>::infinity())};
 }
 
-[[nodiscard]] std::optional<std::vector<Interval>> exclusionIntervals(const std::vector<Point>& polygon,
+[[nodiscard]] std::optional<std::vector<Interval>> exclusionIntervals(const PreparedShape& shape,
                                                                       const GridFrame& frame, double across)
 {
-    const auto interiorIntervals = polygonIntervals(polygon, frame, across);
+    const auto interiorIntervals = polygonIntervals(shape, frame, across);
     if (!interiorIntervals) {
         return std::nullopt;
     }
 
     std::vector<Interval> intervals = *interiorIntervals;
-    intervals.reserve(intervals.size() + polygon.size() * 2);
-    for (std::size_t index = 0; index < polygon.size(); ++index) {
-        const Point& first = polygon[index];
-        const Point& second = polygon[(index + 1) % polygon.size()];
+    intervals.reserve(intervals.size() + shape.edges.size() * 2);
+    for (const PreparedEdge& edge : shape.edges) {
+        if (!boundsCrossScanline(edge.bounds, across)) {
+            continue;
+        }
+        const Point& first = edge.first;
+        const Point& second = edge.second;
         const double firstAcross = frame.across(first);
         const double secondAcross = frame.across(second);
         const double firstAlong = frame.along(first);
@@ -498,14 +612,14 @@ struct TransitResult
     std::vector<Interval> included;
     std::vector<Interval> excluded;
     for (const PreparedShape& shape : prepared.inclusions) {
-        const auto intervals = polygonIntervals(shape.vertices, prepared.frame, across);
+        const auto intervals = polygonIntervals(shape, prepared.frame, across);
         if (!intervals) {
             return std::nullopt;
         }
         included.insert(included.end(), intervals->begin(), intervals->end());
     }
     for (const PreparedShape& shape : prepared.exclusions) {
-        const auto intervals = exclusionIntervals(shape.vertices, prepared.frame, across);
+        const auto intervals = exclusionIntervals(shape, prepared.frame, across);
         if (!intervals) {
             return std::nullopt;
         }
@@ -614,12 +728,18 @@ struct TransitResult
         return false;
     }
 
+    const GridBounds segmentBounds = gridBounds({start, end}, prepared.frame);
     std::vector<double> parameters{0.0, 1.0};
     const auto appendBoundaryParameters = [&](const std::vector<PreparedShape>& shapes) {
         for (const PreparedShape& shape : shapes) {
-            for (std::size_t index = 0; index < shape.vertices.size(); ++index) {
-                const auto edgeParameters = segmentBoundaryParameters(
-                    start, end, shape.vertices[index], shape.vertices[(index + 1) % shape.vertices.size()]);
+            if (!boundsOverlap(segmentBounds, shape.bounds)) {
+                continue;
+            }
+            for (const PreparedEdge& edge : shape.edges) {
+                if (!boundsOverlap(segmentBounds, edge.bounds)) {
+                    continue;
+                }
+                const auto edgeParameters = segmentBoundaryParameters(start, end, edge.first, edge.second);
                 parameters.insert(parameters.end(), edgeParameters.begin(), edgeParameters.end());
             }
         }
@@ -674,6 +794,22 @@ struct TransitResult
 [[nodiscard]] bool addExclusionNavigationNodes(std::vector<Point>& nodes, const PreparedShape& shape,
                                                const PreparedInput& prepared)
 {
+    if (shape.circleNavigation) {
+        const double clearance = std::max(1e-7, shape.circleNavigation->radius * 1e-8);
+        for (const Point& vertex : shape.vertices) {
+            const Point radial = vertex - shape.circleNavigation->center;
+            const double radialLength = length(radial);
+            if (radialLength <= DISTANCE_EPSILON) {
+                return false;
+            }
+            const Point navigationNode = vertex + radial * (clearance / radialLength);
+            if (!addUniqueNode(nodes, navigationNode, prepared)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     Point center;
     for (const Point& point : shape.vertices) {
         center = center + point;
@@ -709,60 +845,125 @@ struct TransitResult
     return true;
 }
 
-[[nodiscard]] TransitResult findTransit(const Point& start, const Point& end, const PreparedInput& prepared)
+[[nodiscard]] std::optional<Roadmap> buildRoadmap(const PreparedInput& prepared)
 {
-    if (segmentInEffectiveRegion(start, end, prepared)) {
-        return {TransitStatus::Found, {}};
-    }
-
-    std::vector<Point> nodes;
-    nodes.reserve(prepared.limits.maxVisibilityNodes);
-    if (!addUniqueNode(nodes, start, prepared) || !addUniqueNode(nodes, end, prepared)) {
-        return {TransitStatus::ComplexityLimit, {}};
-    }
-    if (nodes.size() != 2) {
-        return {};
-    }
+    Roadmap roadmap;
+    roadmap.nodes.reserve(prepared.limits.maxVisibilityNodes);
 
     for (const PreparedShape& shape : prepared.inclusions) {
         for (const Point& point : shape.vertices) {
-            if (!addUniqueNode(nodes, point, prepared)) {
-                return {TransitStatus::ComplexityLimit, {}};
+            if (!addUniqueNode(roadmap.nodes, point, prepared)) {
+                return std::nullopt;
             }
         }
     }
     for (const PreparedShape& shape : prepared.exclusions) {
-        if (!addExclusionNavigationNodes(nodes, shape, prepared)) {
-            return {TransitStatus::ComplexityLimit, {}};
+        if (!addExclusionNavigationNodes(roadmap.nodes, shape, prepared)) {
+            return std::nullopt;
         }
     }
 
-    const std::size_t nodeCount = nodes.size();
+    std::sort(roadmap.nodes.begin(), roadmap.nodes.end(), [](const Point& left, const Point& right) {
+        return left.north == right.north ? left.east < right.east : left.north < right.north;
+    });
+
+    const std::size_t nodeCount = roadmap.nodes.size();
+    roadmap.edges.resize(nodeCount);
+    roadmap.components.resize(nodeCount);
+    for (std::size_t index = 0; index < nodeCount; ++index) {
+        roadmap.components[index] = index;
+    }
+    const auto findComponent = [&roadmap](std::size_t node) {
+        std::size_t root = node;
+        while (roadmap.components[root] != root) {
+            root = roadmap.components[root];
+        }
+        while (roadmap.components[node] != node) {
+            const std::size_t parent = roadmap.components[node];
+            roadmap.components[node] = root;
+            node = parent;
+        }
+        return root;
+    };
+    const auto joinComponents = [&findComponent, &roadmap](std::size_t first, std::size_t second) {
+        const std::size_t firstRoot = findComponent(first);
+        const std::size_t secondRoot = findComponent(second);
+        if (firstRoot != secondRoot) {
+            roadmap.components[secondRoot] = firstRoot;
+        }
+    };
+    for (std::size_t first = 0; first < nodeCount; ++first) {
+        for (std::size_t second = first + 1; second < nodeCount; ++second) {
+            if (!segmentInEffectiveRegion(roadmap.nodes[first], roadmap.nodes[second], prepared)) {
+                continue;
+            }
+            roadmap.edges[first].push_back(second);
+            roadmap.edges[second].push_back(first);
+            joinComponents(first, second);
+        }
+    }
+    for (std::size_t index = 0; index < nodeCount; ++index) {
+        roadmap.components[index] = findComponent(index);
+    }
+    return roadmap;
+}
+
+[[nodiscard]] bool advancesFromStart(const Point& start, const Point& point, const std::optional<Point>& initialDirection)
+{
+    if (!initialDirection) {
+        return true;
+    }
+
+    const double initialDirectionLength = length(*initialDirection);
+    return initialDirectionLength <= DISTANCE_EPSILON ||
+           dot(point - start, *initialDirection) >= -DISTANCE_EPSILON * initialDirectionLength;
+}
+
+[[nodiscard]] TransitResult findTransit(const Point& start, const Point& end, const PreparedInput& prepared,
+                                        const Roadmap& roadmap, const std::optional<Point>& initialDirection = std::nullopt)
+{
+    if (!pointInEffectiveRegion(start, prepared) || !pointInEffectiveRegion(end, prepared)) {
+        return {};
+    }
+    if (segmentInEffectiveRegion(start, end, prepared)) {
+        return {TransitStatus::Found, {}};
+    }
+
+    const std::size_t nodeCount = roadmap.nodes.size();
+    if (nodeCount == 0) {
+        return {};
+    }
+
     const double infinity = std::numeric_limits<double>::infinity();
     std::vector<double> costs(nodeCount, infinity);
     std::vector<std::size_t> parent(nodeCount, nodeCount);
     std::vector<bool> visited(nodeCount, false);
-    costs[0] = 0.0;
+    std::vector<bool> reachesEnd(nodeCount, false);
+    for (std::size_t node = 0; node < nodeCount; ++node) {
+        if (advancesFromStart(start, roadmap.nodes[node], initialDirection) &&
+            segmentInEffectiveRegion(start, roadmap.nodes[node], prepared)) {
+            costs[node] = distance(start, roadmap.nodes[node]);
+        }
+        reachesEnd[node] = segmentInEffectiveRegion(roadmap.nodes[node], end, prepared);
+    }
 
     for (std::size_t iteration = 0; iteration < nodeCount; ++iteration) {
         std::size_t current = nodeCount;
         for (std::size_t node = 0; node < nodeCount; ++node) {
-            if (!visited[node] && (current == nodeCount || costs[node] < costs[current])) {
+            if (!visited[node] && (current == nodeCount || costs[node] < costs[current] ||
+                                   (costs[node] == costs[current] && node < current))) {
                 current = node;
             }
         }
         if (current == nodeCount || !std::isfinite(costs[current])) {
             break;
         }
-        if (current == 1) {
-            break;
-        }
         visited[current] = true;
-        for (std::size_t next = 0; next < nodeCount; ++next) {
-            if (visited[next] || next == current || !segmentInEffectiveRegion(nodes[current], nodes[next], prepared)) {
+        for (const std::size_t next : roadmap.edges[current]) {
+            if (visited[next]) {
                 continue;
             }
-            const double candidate = costs[current] + distance(nodes[current], nodes[next]);
+            const double candidate = costs[current] + distance(roadmap.nodes[current], roadmap.nodes[next]);
             if (candidate + DISTANCE_EPSILON < costs[next]) {
                 costs[next] = candidate;
                 parent[next] = current;
@@ -770,36 +971,102 @@ struct TransitResult
         }
     }
 
-    if (!std::isfinite(costs[1])) {
+    std::size_t destination = nodeCount;
+    double destinationCost = infinity;
+    for (std::size_t node = 0; node < nodeCount; ++node) {
+        if (!reachesEnd[node]) {
+            continue;
+        }
+        const double candidate = costs[node] + distance(roadmap.nodes[node], end);
+        if (candidate + DISTANCE_EPSILON < destinationCost ||
+            (std::abs(candidate - destinationCost) <= DISTANCE_EPSILON && node < destination)) {
+            destination = node;
+            destinationCost = candidate;
+        }
+    }
+    if (destination == nodeCount || !std::isfinite(destinationCost)) {
         return {};
     }
 
     std::vector<Point> reversePath;
-    for (std::size_t current = 1; current != 0; current = parent[current]) {
-        if (parent[current] == nodeCount) {
-            return {};
-        }
-        reversePath.push_back(nodes[current]);
+    for (std::size_t current = destination; current != nodeCount; current = parent[current]) {
+        reversePath.push_back(roadmap.nodes[current]);
     }
     std::reverse(reversePath.begin(), reversePath.end());
-    reversePath.pop_back();  // The caller emits the next spray endpoint.
+    if (!reversePath.empty() && distance(reversePath.front(), start) <= DISTANCE_EPSILON) {
+        reversePath.erase(reversePath.begin());
+    }
+    if (!reversePath.empty() && distance(reversePath.back(), end) <= DISTANCE_EPSILON) {
+        reversePath.pop_back();
+    }
     return {TransitStatus::Found, std::move(reversePath)};
 }
 
-struct RepresentativeResult
+[[nodiscard]] std::optional<std::vector<Point>> simplifyTransitPoints(const std::vector<Point>& transitPoints,
+                                                                       const Point& start, const Point& end,
+                                                                       const PreparedInput& prepared,
+                                                                       const std::optional<Point>& initialDirection)
 {
-    bool complexityLimit = false;
-    bool invalidGeometry = false;
-    std::vector<Point> points;
+    std::vector<Point> simplified;
+    Point anchor = start;
+    std::size_t next = 0;
+    while (next < transitPoints.size()) {
+        if (segmentInEffectiveRegion(anchor, end, prepared)) {
+            return simplified;
+        }
+
+        std::size_t farthest = transitPoints.size();
+        for (std::size_t index = transitPoints.size(); index-- > next;) {
+            if (segmentInEffectiveRegion(anchor, transitPoints[index], prepared) &&
+                (next != 0 || advancesFromStart(start, transitPoints[index], initialDirection))) {
+                farthest = index;
+                break;
+            }
+        }
+        if (farthest == transitPoints.size()) {
+            return std::nullopt;
+        }
+
+        simplified.push_back(transitPoints[farthest]);
+        anchor = transitPoints[farthest];
+        next = farthest + 1;
+    }
+
+    if (!segmentInEffectiveRegion(anchor, end, prepared)) {
+        return std::nullopt;
+    }
+    return simplified;
+}
+
+enum class CoverageStatus
+{
+    Connected,
+    Disconnected,
+    InvalidGeometry,
+    ComplexityLimit,
+    Empty,
 };
 
-[[nodiscard]] RepresentativeResult coverageRepresentatives(const PreparedInput& prepared,
-                                                           const std::vector<SprayLeg>& legs)
+struct CoverageResult
+{
+    CoverageStatus status = CoverageStatus::InvalidGeometry;
+};
+
+[[nodiscard]] CoverageResult coverageIsConnected(const PreparedInput& prepared, const Roadmap& roadmap,
+                                                const std::vector<SprayLeg>& legs)
 {
     std::vector<Point> representatives;
+    representatives.reserve(legs.size());
+    const auto appendRepresentative = [&representatives, &prepared](const Point& point) {
+        if (!finitePoint(point) || representatives.size() >= prepared.limits.maxTopologyRepresentatives) {
+            return false;
+        }
+        representatives.push_back(point);
+        return true;
+    };
     for (const SprayLeg& leg : legs) {
-        if (!addUniqueNode(representatives, (leg.start + leg.end) * 0.5, prepared)) {
-            return {true, false, {}};
+        if (!appendRepresentative((leg.start + leg.end) * 0.5)) {
+            return {CoverageStatus::ComplexityLimit};
         }
     }
 
@@ -817,23 +1084,82 @@ struct RepresentativeResult
     crossings.erase(std::unique(crossings.begin(), crossings.end(),
                                 [](double left, double right) {
                                     return std::abs(left - right) <=
-                                           coordinateTolerance(std::max({1.0, std::abs(left), std::abs(right)}));
+                                          coordinateTolerance(std::max({1.0, std::abs(left), std::abs(right)}));
                                 }),
                     crossings.end());
     for (std::size_t index = 1; index < crossings.size(); ++index) {
         const double across = (crossings[index - 1] + crossings[index]) * 0.5;
-        const auto intervals = effectiveIntervals(prepared, across);
+        const std::optional<std::vector<Interval>> intervals = effectiveIntervals(prepared, across);
         if (!intervals) {
-            return {false, true, {}};
+            return {CoverageStatus::InvalidGeometry};
         }
         for (const Interval& interval : *intervals) {
-            if (!addUniqueNode(representatives, prepared.frame.point((interval.start + interval.end) * 0.5, across),
-                               prepared)) {
-                return {true, false, {}};
+            if (!appendRepresentative(prepared.frame.point((interval.start + interval.end) * 0.5, across))) {
+                return {CoverageStatus::ComplexityLimit};
             }
         }
     }
-    return {false, false, std::move(representatives)};
+    std::sort(representatives.begin(), representatives.end(), pointLexicographicallyLess);
+    representatives.erase(std::unique(representatives.begin(), representatives.end(), samePoint),
+                          representatives.end());
+    if (representatives.empty()) {
+        return {CoverageStatus::Empty};
+    }
+    if (roadmap.nodes.empty()) {
+        return {CoverageStatus::Disconnected};
+    }
+
+    std::vector<std::size_t> components = roadmap.components;
+    const auto findComponent = [&components](std::size_t node) {
+        std::size_t root = node;
+        while (components[root] != root) {
+            root = components[root];
+        }
+        while (components[node] != node) {
+            const std::size_t parent = components[node];
+            components[node] = root;
+            node = parent;
+        }
+        return root;
+    };
+    const auto joinComponents = [&components, &findComponent](std::size_t first, std::size_t second) {
+        const std::size_t firstRoot = findComponent(first);
+        const std::size_t secondRoot = findComponent(second);
+        if (firstRoot != secondRoot) {
+            components[secondRoot] = firstRoot;
+        }
+    };
+
+    std::vector<std::size_t> representativeComponents;
+    representativeComponents.reserve(representatives.size());
+    for (const Point& representative : representatives) {
+        std::size_t firstVisible = roadmap.nodes.size();
+        for (std::size_t node = 0; node < roadmap.nodes.size(); ++node) {
+            if (firstVisible != roadmap.nodes.size() &&
+                findComponent(node) == findComponent(firstVisible)) {
+                continue;
+            }
+            if (!segmentInEffectiveRegion(representative, roadmap.nodes[node], prepared)) {
+                continue;
+            }
+            if (firstVisible == roadmap.nodes.size()) {
+                firstVisible = node;
+            } else {
+                joinComponents(firstVisible, node);
+            }
+        }
+        if (firstVisible == roadmap.nodes.size()) {
+            return {CoverageStatus::Disconnected};
+        }
+        representativeComponents.push_back(firstVisible);
+    }
+
+    const std::size_t firstComponent = findComponent(representativeComponents.front());
+    const bool connected = std::all_of(representativeComponents.begin(), representativeComponents.end(),
+                                       [&findComponent, firstComponent](std::size_t component) {
+                                           return findComponent(component) == firstComponent;
+                                       });
+    return {connected ? CoverageStatus::Connected : CoverageStatus::Disconnected};
 }
 
 [[nodiscard]] PlannerResult failure(PlannerStatus status, std::string error)
@@ -892,47 +1218,61 @@ PlannerResult plan(const PlannerInput& input)
         return failure(PlannerStatus::EmptyRegion, "the effective region contains no sprayable scanline");
     }
 
-    const RepresentativeResult representatives = coverageRepresentatives(prepared, legs);
-    if (representatives.complexityLimit) {
-        return failure(PlannerStatus::ComplexityLimit, "connectivity probes exceed the visibility-node limit");
+    const std::optional<Roadmap> roadmap = buildRoadmap(prepared);
+    if (!roadmap) {
+        return failure(PlannerStatus::ComplexityLimit, "visibility graph exceeds its node limit");
     }
-    if (representatives.invalidGeometry) {
+    const CoverageResult coverage = coverageIsConnected(prepared, *roadmap, legs);
+    if (coverage.status == CoverageStatus::ComplexityLimit) {
+        return failure(PlannerStatus::ComplexityLimit, "topology representatives exceed their limit");
+    }
+    if (coverage.status == CoverageStatus::InvalidGeometry) {
         return failure(PlannerStatus::InvalidInput, "connectivity analysis encountered numerically invalid geometry");
     }
-    if (representatives.points.empty()) {
+    if (coverage.status == CoverageStatus::Empty) {
         return failure(PlannerStatus::EmptyRegion, "the effective region has no connected interior");
     }
-    for (std::size_t index = 1; index < representatives.points.size(); ++index) {
-        const TransitResult transit = findTransit(representatives.points[0], representatives.points[index], prepared);
-        if (transit.status == TransitStatus::ComplexityLimit) {
-            return failure(PlannerStatus::ComplexityLimit, "visibility graph exceeds its node limit");
-        }
-        if (transit.status != TransitStatus::Found) {
-            return failure(PlannerStatus::DisconnectedRegion,
-                           "the effective region is disconnected or cannot be routed");
-        }
+    if (coverage.status != CoverageStatus::Connected) {
+        return failure(PlannerStatus::DisconnectedRegion, "the effective region is disconnected or cannot be routed");
     }
 
     std::vector<RoutePoint> route;
     route.reserve(legs.size() * 3);
-    route.push_back({legs.front().start, RoutePointType::SprayStart});
-    route.push_back({legs.front().end, RoutePointType::SprayEnd});
+    const auto appendRoutePoint = [&route](const Point& point, RoutePointType type) {
+        if (!route.empty() && distance(route.back().position, point) <= DISTANCE_EPSILON) {
+            return false;
+        }
+        route.push_back({point, type});
+        return true;
+    };
+    if (!appendRoutePoint(legs.front().start, RoutePointType::SprayStart) ||
+        !appendRoutePoint(legs.front().end, RoutePointType::SprayEnd)) {
+        return failure(PlannerStatus::NoRoute, "the spray route contains a zero-length segment");
+    }
     if (route.size() > prepared.limits.maxRoutePoints) {
         return failure(PlannerStatus::ComplexityLimit, "route point count exceeds its limit");
     }
     for (std::size_t index = 1; index < legs.size(); ++index) {
-        const TransitResult transit = findTransit(legs[index - 1].end, legs[index].start, prepared);
-        if (transit.status == TransitStatus::ComplexityLimit) {
-            return failure(PlannerStatus::ComplexityLimit, "visibility graph exceeds its node limit");
-        }
+        const Point previousLegDirection = legs[index - 1].end - legs[index - 1].start;
+        TransitResult transit =
+            findTransit(legs[index - 1].end, legs[index].start, prepared, *roadmap, previousLegDirection);
         if (transit.status != TransitStatus::Found) {
             return failure(PlannerStatus::NoRoute, "a spray-leg connector cannot remain inside the effective region");
         }
-        for (const Point& point : transit.points) {
-            route.push_back({point, RoutePointType::Transit});
+        const std::optional<std::vector<Point>> simplifiedTransitPoints =
+            simplifyTransitPoints(transit.points, legs[index - 1].end, legs[index].start, prepared, previousLegDirection);
+        if (!simplifiedTransitPoints) {
+            return failure(PlannerStatus::NoRoute, "a spray-leg connector cannot be simplified safely");
         }
-        route.push_back({legs[index].start, RoutePointType::SprayStart});
-        route.push_back({legs[index].end, RoutePointType::SprayEnd});
+        for (const Point& point : *simplifiedTransitPoints) {
+            if (!appendRoutePoint(point, RoutePointType::Transit)) {
+                return failure(PlannerStatus::NoRoute, "a spray-leg connector contains a zero-length segment");
+            }
+        }
+        if (!appendRoutePoint(legs[index].start, RoutePointType::SprayStart) ||
+            !appendRoutePoint(legs[index].end, RoutePointType::SprayEnd)) {
+            return failure(PlannerStatus::NoRoute, "the spray route contains a zero-length segment");
+        }
         if (route.size() > prepared.limits.maxRoutePoints) {
             return failure(PlannerStatus::ComplexityLimit, "route point count exceeds its limit");
         }

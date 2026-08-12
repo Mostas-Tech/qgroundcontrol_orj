@@ -43,6 +43,7 @@ struct PlannerLimits
     std::size_t maxScanLines = 4096;
     std::size_t maxSprayLegs = 8192;
     std::size_t maxVisibilityNodes = 512;
+    std::size_t maxTopologyRepresentatives = 32768;
     std::size_t maxRoutePoints = 32768;
 };
 
