@@ -9,4 +9,7 @@ class AgriculturalSprayPlanViewUITest final : public QmlUITestBase
 
 private slots:
     void _qmlComponentsLoad();
+    void _routeVisualStyleProperties();
+    void _customPlanTreeAndLayerData();
+    void _customGeoFenceVisualsAndCircleAction();
 };

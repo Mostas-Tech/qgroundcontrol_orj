@@ -4,6 +4,7 @@
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QMap>
 #include <QtCore/QMetaObject>
+#include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtPositioning/QGeoCoordinate>
 
@@ -57,15 +58,12 @@ public:
 
     enum DropletClass
     {
-        VeryFine = 0,
-        Fine,
-        Medium,
-        Coarse,
-        VeryCoarse,
-        ExtremelyCoarse,
-        UltraCoarse,
+        Fine = 1,
+        Medium = 2,
+        Coarse = 3,
     };
     Q_ENUM(DropletClass)
+    static constexpr DropletClass UltraCoarse = Coarse;  // Source compatibility for callers of the retired class.
 
     enum Status
     {
@@ -114,6 +112,7 @@ public:
 
     /// Re-snapshots the fully loaded GeoFence without making the mission item dirty.
     void refreshAfterLoad();
+    void beginInteractiveCreation() final;
 
     // ComplexMissionItem overrides
     QString patternName() const final { return tr(canonicalName); }
@@ -212,6 +211,7 @@ private:
     void _reconnectShapeSignals();
     void _connectPolygonSignals(QGCFencePolygon* polygon);
     void _connectCircleSignals(QGCFenceCircle* circle);
+    void _sourcePolygonTraceModeChanged(QGCFencePolygon* polygon, bool traceMode);
     void _invalidateRoute();
     void _scheduleRebuild();
     void _clearGeneratedRoute();
@@ -222,6 +222,9 @@ private:
     void _rebuildFlightPathSegments();
     void _updateBoundingCube();
     void _emitSuccessfulRouteNotifications(int previousLastSequenceNumber);
+    bool _resolveSourcePolygon(QString& errorText);
+    int _sourcePolygonIndex() const;
+    bool _normalizeLoadedDropletClass(QJsonValue jsonValue, QVariant& typedValue, QString& errorText);
 
     QMap<QString, FactMetaData*> _metaDataMap;
     Fact _altitudeFact;
@@ -234,6 +237,10 @@ private:
     GeoFenceController* _geoFenceController = nullptr;
     QmlObjectListModel* _polygonModel = nullptr;
     QmlObjectListModel* _circleModel = nullptr;
+    QPointer<QGCFencePolygon> _sourcePolygon;
+    int _loadedSourcePolygonIndex = -1;
+    bool _sourcePolygonReferencePresent = false;
+    bool _sourcePolygonResolved = false;
     QList<QMetaObject::Connection> _shapeConnections;
 
     QList<QGeoCoordinate> _routeCoordinates;
@@ -249,6 +256,8 @@ private:
     bool _shapeConnectionsDirty = true;
     bool _rebuildPending = false;
     bool _loading = false;
+    bool _loadedFromJson = false;
 
     static constexpr int _jsonVersion = 1;
+    static constexpr const char* _sourcePolygonIndexKey = "sourcePolygonIndex";
 };

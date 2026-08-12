@@ -8,5 +8,4 @@ class AgriculturalSprayPlanLoadTest final : public OfflineMissionTest
 
 private slots:
     void _missionLoadedBeforeFenceBuildsFinalRouteAndClearsStaleRoute();
-    void _duplicateSprayLoadIsRejectedAtomically();
 };

@@ -14,10 +14,14 @@ public:
 
     static QGCCorePlugin* instance();
 
+    QGCOptions* options() override;
     QVariantList complexMissionItemNames(Vehicle* vehicle) override;
     bool canCreateComplexMissionItem(const QString& complexItemType, const PlanMasterController* masterController,
                                      const QmlObjectListModel* targetVisualItems, QString& errorMessage) const override;
     ComplexMissionItem* createComplexMissionItem(const QString& complexItemType, PlanMasterController* masterController,
                                                  bool flyView, const QString& kmlOrShpFile = QString()) override;
     void postLoadFromJson(PlanMasterController* controller, QJsonObject& json) override;
+
+private:
+    QGCOptions* _customOptions = nullptr;
 };

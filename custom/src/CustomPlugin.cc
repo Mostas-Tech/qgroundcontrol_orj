@@ -2,6 +2,7 @@
 
 #include <QtCore/QApplicationStatic>
 
+#include "CustomOptions.h"
 #include "MissionController.h"
 #include "MissionManager/AgriculturalSprayComplexItem.h"
 #include "PlanMasterController.h"
@@ -13,6 +14,7 @@ QGC_LOGGING_CATEGORY(CustomLog, "qgc.custom.customplugin")
 Q_APPLICATION_STATIC(CustomPlugin, _customPluginInstance);
 
 CustomPlugin::CustomPlugin(QObject* parent) : QGCCorePlugin(parent)
+    , _customOptions(new CustomOptions(this))
 {
     qCDebug(CustomLog) << this;
 }
@@ -20,6 +22,11 @@ CustomPlugin::CustomPlugin(QObject* parent) : QGCCorePlugin(parent)
 QGCCorePlugin* CustomPlugin::instance()
 {
     return _customPluginInstance();
+}
+
+QGCOptions* CustomPlugin::options()
+{
+    return _customOptions;
 }
 
 QVariantList CustomPlugin::complexMissionItemNames(Vehicle* vehicle)

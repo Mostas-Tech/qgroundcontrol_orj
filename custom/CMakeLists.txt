@@ -16,6 +16,8 @@ set(QGC_RESOURCES
 set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOptions.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOptions.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayComplexItem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayComplexItem.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayGeometry.h
