@@ -39,9 +39,23 @@ just test Custom
 Visual Studio environment and the Qt/GStreamer runtime paths. Do not activate `VsDevCmd.bat`
 manually or create another build tree.
 
+## Codex sandbox boundary
+
+Canonical executable build, test, and lint commands remain `just` or `.venv\Scripts\just.exe`
+recipes. Never bypass a sandbox launch failure with direct CMake, CTest, Ninja, pre-commit, or
+Python commands. If a canonical `just` recipe fails before recipe execution with WindowsApps,
+Python launcher, or access symptoms inside the Codex sandbox, retry that exact recipe once with
+sandbox escalation and user approval. This is the same canonical gate, not a second alternative
+validation path.
+
+If the elevated exact command progresses, classify the first result as a sandbox boundary rather
+than a broken venv or toolchain. If it still fails, report its first real failure accurately and do
+not branch to alternate commands.
+
 The repaired tree was verified with consecutive no-op builds (`ninja: no work to do`, approximately
 2.5 seconds). If the dependency database is interrupted again, compact it once with
-`ninja -C build-spray-msvc -t recompact`; do not delete the tree.
+`ninja -C build-spray-msvc -t recompact`; this explicitly documented maintenance action is not a
+validation fallback. Do not delete the tree.
 
 ## Debug GUI launch
 

@@ -11,7 +11,12 @@
 .fleet/
 .vs/
 .settings/
-.codex/
+.codex/*
+!.codex/config.toml
+!.codex/BASE_INSTRUCTIONS.md
+!.codex/agents/
+.codex/agents/*
+!.codex/agents/*.toml
 .env
 
 # VS Code - track .default files, ignore personal overrides
