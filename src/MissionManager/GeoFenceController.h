@@ -42,6 +42,12 @@ public:
     ///     @param bottomRight: Bottom right left coordinate or map viewport
     Q_INVOKABLE void addInclusionCircle(QGeoCoordinate topLeft, QGeoCoordinate bottomRight);
 
+    /// Adds an empty inclusion polygon for interactive tracing.
+    Q_INVOKABLE QGCFencePolygon* addBlankInclusionPolygon();
+
+    /// Adds a circle with an explicit center, radius, and inclusion type.
+    Q_INVOKABLE QGCFenceCircle* addCircle(QGeoCoordinate center, double radius, bool inclusion);
+
     /// Deletes the specified polygon from the polygon list
     ///     @param index: Index of polygon to delete
     Q_INVOKABLE void deletePolygon(int index);

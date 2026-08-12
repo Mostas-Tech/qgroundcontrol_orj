@@ -25,11 +25,13 @@ TreeView {
     signal editingLayerChangeRequested(int layer)
 
     readonly property bool _createNewPlanMode: planMasterController.showCreateFromTemplate
+    readonly property bool _showPlanInfo: QGroundControl.corePlugin.options.showPlanInfo
+    readonly property bool _showPlanDefaults: QGroundControl.corePlugin.options.showPlanDefaults
 
     on_CreateNewPlanModeChanged: {
         if (_createNewPlanMode) {
             var planFileRow = _rowFor(_missionController.planFileGroupIndex)
-            if (!root.isExpanded(planFileRow)) {
+            if (_showPlanInfo && planFileRow >= 0 && !root.isExpanded(planFileRow)) {
                 root.expand(planFileRow)
             }
             root.contentY = 0
@@ -41,7 +43,9 @@ TreeView {
     property var _rallyPointController: planMasterController.rallyPointController
 
     // Helper: convert a persistent model index to the current visual row
-    function _rowFor(modelIndex) { return root.rowAtIndex(modelIndex) }
+    function _rowFor(modelIndex) {
+        return modelIndex && modelIndex.valid ? root.rowAtIndex(modelIndex) : -1
+    }
 
     // QGCFlickableScrollIndicator expects parent to have indicatorColor (provided by QGCFlickable/QGCListView)
     property color indicatorColor: qgcPal.text
@@ -61,11 +65,11 @@ TreeView {
                 // First waypoint added — collapse Plan Info and Defaults
                 if (root._lastMissionItemCount <= 1 && newCount > 1) {
                     var planFileRow = _rowFor(_missionController.planFileGroupIndex)
-                    if (root.isExpanded(planFileRow)) {
+                    if (_showPlanInfo && planFileRow >= 0 && root.isExpanded(planFileRow)) {
                         root.collapse(planFileRow)
                     }
                     var defaultsRow = _rowFor(_missionController.defaultsGroupIndex)
-                    if (root.isExpanded(defaultsRow)) {
+                    if (_showPlanDefaults && defaultsRow >= 0 && root.isExpanded(defaultsRow)) {
                         root.collapse(defaultsRow)
                     }
                 }
@@ -83,11 +87,20 @@ TreeView {
             root.collapseRecursively()
             if (_missionController.containsItems) {
                 // Non-empty plan: expand mission group
-                root.expand(_rowFor(_missionController.missionGroupIndex))
+                var missionRow = _rowFor(_missionController.missionGroupIndex)
+                if (missionRow >= 0) {
+                    root.expand(missionRow)
+                }
             } else {
                 // Empty plan: expand Plan Info and Defaults, scroll to top
-                root.expand(_rowFor(_missionController.planFileGroupIndex))
-                root.expand(_rowFor(_missionController.defaultsGroupIndex))
+                var planFileRow = _rowFor(_missionController.planFileGroupIndex)
+                if (_showPlanInfo && planFileRow >= 0) {
+                    root.expand(planFileRow)
+                }
+                var defaultsRow = _rowFor(_missionController.defaultsGroupIndex)
+                if (_showPlanDefaults && defaultsRow >= 0) {
+                    root.expand(defaultsRow)
+                }
                 root.contentY = 0
             }
             root._lastMissionItemCount = _missionController.visualItems ? _missionController.visualItems.count : 0
@@ -156,6 +169,9 @@ TreeView {
     // Toggle expand/collapse for a non-layer group header (Plan Info, Defaults, Transform).
     // Caller is responsible for calling allowViewSwitch() before invoking this.
     function _toggleGroup(row) {
+        if (row < 0) {
+            return
+        }
         if (root.isExpanded(row)) {
             root.collapse(row)
         } else {
@@ -201,9 +217,12 @@ TreeView {
     delegate: Item {
         id: delegateRoot
         implicitWidth: root.width
-        implicitHeight: (loader.item ? loader.item.height : 1) + (separatorLine.visible ? separatorLine.height + root.rowSpacing : 0)
+        implicitHeight: _visible ? (loader.item ? loader.item.height : 1) + (separatorLine.visible ? separatorLine.height + root.rowSpacing : 0) : 1
         enabled: !root._createNewPlanMode || _enabledInCreateMode
         opacity: enabled ? 1 : root.editorMap._nonInteractiveOpacity
+        // TreeView delegates must stay visible and have a positive height. Hiding
+        // a delegate causes Qt Quick's table layout to convert an invalid row size.
+        visible: true
         width: root.width
 
         required property TreeView treeView
@@ -221,8 +240,13 @@ TreeView {
         // In create-new-plan mode, only the Plan Info and Defaults groups and their children are enabled
         readonly property bool _enabledInCreateMode: nodeType === "planFileGroup" || nodeType === "planFileInfo"
                                                      || nodeType === "defaultsGroup" || nodeType === "defaultsInfo"
+        readonly property bool _visible: PlanEditLayers.planTreeNodeVisible(nodeType, nodeObject)
 
-        onImplicitHeightChanged: layoutTimer.restart()
+        onImplicitHeightChanged: {
+            if (_visible) {
+                layoutTimer.restart()
+            }
+        }
 
         readonly property string _qrcBase: "qrc:/qml/QGroundControl/PlanView/"
 
@@ -231,9 +255,13 @@ TreeView {
         // preventing "Cannot read property of null" warnings.
         Loader {
             id: loader
+            active: delegateRoot._visible
             width: parent.width
 
             Component.onCompleted: {
+                if (!delegateRoot._visible) {
+                    return
+                }
                 switch (delegateRoot.nodeType) {
                 case "planFileGroup":
                 case "defaultsGroup":
