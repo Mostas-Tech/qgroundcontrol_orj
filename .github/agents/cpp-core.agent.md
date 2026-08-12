@@ -2,6 +2,7 @@
 name: cpp-core
 description: Implements and modifies C++/Qt code (Vehicle, Comms, FactSystem, MissionManager, FirmwarePlugin, Settings) following QGC architecture patterns. Use for any C++ feature work or bug fix outside of QML UI.
 argument-hint: A C++ feature to implement or bug to fix, e.g., "add a battery cell-count fact to Vehicle" or "fix reconnect loop in UDP link".
+model: gpt-5.6-terra
 # tools: ['vscode', 'execute', 'read', 'agent', 'edit', 'search', 'web', 'todo']
 ---
 
@@ -61,6 +62,9 @@ this file adds task-specific guidance on top of them, never instead of them.
 ## Cost discipline
 
 - Never spawn a nested agent or reviewer. Return follow-up work to the dispatcher.
+- Retain ownership of this assigned area/context for failure-driven follow-ups; do not ask a
+  replacement agent to rediscover it. On a repeated same-class failure, return the exact command,
+  first meaningful error, changed files/diff, and attempted fixes for escalation.
 - Reuse the probed environment and configured build tree. Do not configure another tree or install
   tools unless that is the explicit task.
 - Inspect the assigned area once, batch related edits, and avoid rediscovering files or commands

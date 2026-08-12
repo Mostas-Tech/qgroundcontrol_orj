@@ -2,6 +2,7 @@
 name: build-ci
 description: Diagnoses and fixes build failures, lint/pre-commit failures, and CI workflow issues using the just recipes and the exact commands CI runs. Use when the build breaks, a pre-commit hook rejects a change, or a GitHub Actions job fails.
 argument-hint: The failure to fix, e.g., "just build fails after the Qt 6.8 bump" or "clang-tidy job is red on the PR".
+model: gpt-5.6-luna
 # tools: ['vscode', 'execute', 'read', 'agent', 'edit', 'search', 'web', 'todo']
 ---
 
@@ -44,10 +45,16 @@ ctest --output-on-failure -L Unit   # exactly what CI runs
 
 - **Reproduce first.** Run the failing command locally (or read the full CI log) before changing
   anything; quote the first real error, not the cascade that follows it.
+- **Final-gate boundary.** The final gate is command-only: run and classify the first real failure
+  with concise evidence. Return C++/QML/domain-test failures to the existing owning agent through
+  the dispatcher. Edit only build configuration, tooling, lint infrastructure, or CI workflows;
+  never become a fresh domain-fix owner.
 - **Fix causes, not symptoms.** Never fix a lint failure by suppressing the check, widening a
   timeout, disabling a hook, or adding `// NOLINT` — the custom hooks (vehicle-null-check,
   check-no-qassert, ...) encode architecture rules; a hit means the code is wrong, not the hook.
-- Formatting failures: run `just format-fix`, never hand-align to satisfy clang-format.
+- Formatting failures: during the command-only final gate, report/classify and return them to the
+  existing owner. Run `just format-fix`—never hand-align—only when explicitly dispatched as the
+  owner of a formatting/tooling fix.
 - Stale-state suspicion (weird CMake/moc errors): inspect `CMakeCache.txt` and the supplied command
   first. Do not reconfigure or clean unless the failure proves it necessary and reconfiguration is
   explicitly in scope.
@@ -72,7 +79,9 @@ ctest --output-on-failure -L Unit   # exactly what CI runs
 - Record an unavailable command once and never retry the same failing environment command. Use the
   documented available fallback or report the blocked gate.
 - Reuse one configured build tree. A concrete code failure permits a focused owner fix and one
-  rerun of the failed command, not a new tree or a full validation sweep.
+  rerun of the failed command, not a new tree or a full validation sweep. Retry only after a
+  failure-driven change; escalate repeated same-class failures with the command, first meaningful
+  error, changed files/diff, and attempted fixes.
 
 ## Definition of done
 
