@@ -50,7 +50,7 @@ Rectangle {
         QGCLabel {
             objectName:         "agriculturalSprayNoInclusionGuidance"
             Layout.fillWidth:   true
-            text:               qsTr("Add at least one inclusion polygon or circle in the GeoFence layer.")
+            text:               qsTr("Draw and finish the new field polygon in the GeoFence layer.")
             wrapMode:           Text.WordWrap
             visible:            _root._noInclusion
         }

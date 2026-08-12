@@ -14,18 +14,24 @@ private slots:
     void init() final;
     void cleanup() final;
 
+
+private:
     void _factMetadataAndAreaStates();
     void _fenceEditsRebuildWhileDirty();
     void _planningInputsAndMetadataOnlyInputs();
     void _derivedRouteAndMissionExpansion();
     void _terrainUpdatesAreOptedOut();
     void _stockItemTerrainUpdatesRemainEnabled();
-    void _sequenceAndDownstreamRecalculation();
     void _jsonRoundTripIsStrictAndSelfContained();
+    void _sourcePolygonReferenceRoundTripTracksReorder();
+    void _legacySourcePolygonReferenceBindsWithWarning();
+    void _invalidSourcePolygonReference_data();
+    void _invalidSourcePolygonReference();
+    void _deletedSourcePolygonReportsExplicitError();
+    void _dropletClassLoadMigration_data();
+    void _dropletClassLoadMigration();
     void _invalidJson_data();
     void _invalidJson();
-
-private:
     QGCFencePolygon* _addPolygon(bool inclusion);
     QGCFenceCircle* _addCircle(bool inclusion);
     void _makeReadyWithSquare();

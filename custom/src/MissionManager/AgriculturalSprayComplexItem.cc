@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "AgriculturalSprayGeometry.h"
 #include "AgriculturalSprayPlanner.h"
 #include "AppSettings.h"
 #include "FactMetaData.h"
@@ -194,8 +195,38 @@ void AgriculturalSprayComplexItem::_connectPolygonSignals(QGCFencePolygon* polyg
         connect(polygon, &QGCMapPolygon::dragCenterChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
     _shapeConnections.append(
         connect(polygon, &QGCFencePolygon::inclusionChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
+    _shapeConnections.append(connect(polygon, &QGCMapPolygon::traceModeChanged, this,
+                                     [this, polygon](bool traceMode) {
+                                         _sourcePolygonTraceModeChanged(polygon, traceMode);
+                                     }));
     _shapeConnections.append(
         connect(polygon, &QObject::destroyed, this, &AgriculturalSprayComplexItem::_fenceModelChanged));
+}
+
+void AgriculturalSprayComplexItem::_sourcePolygonTraceModeChanged(QGCFencePolygon* polygon, bool traceMode)
+{
+    if (traceMode || polygon != _sourcePolygon) {
+        return;
+    }
+
+    const QPointer<QGCFencePolygon> sourcePolygon(polygon);
+    QMetaObject::invokeMethod(this, [this, sourcePolygon]() {
+        if (!sourcePolygon || sourcePolygon != _sourcePolygon || sourcePolygon->traceMode()) {
+            return;
+        }
+
+        _fenceInputChanged();
+
+        if (!sourcePolygon->isValid() || !_missionController) {
+            return;
+        }
+
+        if (_missionController->visualItems() && _missionController->visualItems()->indexOf(this) >= 0 &&
+            _missionController->currentPlanViewItem() != this) {
+            _missionController->setCurrentPlanViewSeqNum(sequenceNumber(), true);
+        }
+        _missionController->requestPlanEditLayer(QStringLiteral("missionGroup"));
+    }, Qt::QueuedConnection);
 }
 
 void AgriculturalSprayComplexItem::_connectCircleSignals(QGCFenceCircle* circle)
@@ -256,6 +287,117 @@ void AgriculturalSprayComplexItem::refreshAfterLoad()
     _invalidateRoute();
     _scheduleRebuild();
     setDirty(false);
+}
+
+void AgriculturalSprayComplexItem::beginInteractiveCreation()
+{
+    if (!_geoFenceController || !_missionController) {
+        const QString error = tr("The GeoFence controller is unavailable for tracing the spray area.");
+        qCWarning(AgriculturalSprayComplexItemLog) << error;
+        _setStatus(GenerationError, error);
+        return;
+    }
+
+    QGCFencePolygon* const polygon = _geoFenceController->addBlankInclusionPolygon();
+    if (!polygon) {
+        const QString error = tr("A new inclusion polygon could not be created for the spray area.");
+        qCWarning(AgriculturalSprayComplexItemLog) << error;
+        _setStatus(GenerationError, error);
+        return;
+    }
+
+    _sourcePolygon = polygon;
+    _loadedSourcePolygonIndex = _sourcePolygonIndex();
+    _sourcePolygonReferencePresent = true;
+    _sourcePolygonResolved = true;
+    _shapeConnectionsDirty = true;
+    _reconnectShapeSignals();
+    polygon->setTraceMode(true);
+    _missionController->requestPlanEditLayer(QStringLiteral("fenceGroup"));
+    setDirty(true);
+    rebuild();
+}
+
+int AgriculturalSprayComplexItem::_sourcePolygonIndex() const
+{
+    if (!_sourcePolygon || !_polygonModel) {
+        return -1;
+    }
+
+    for (int index = 0; index < _polygonModel->count(); ++index) {
+        if (_polygonModel->value<QGCFencePolygon*>(index) == _sourcePolygon) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+bool AgriculturalSprayComplexItem::_resolveSourcePolygon(QString& errorText)
+{
+    errorText.clear();
+    if (!_polygonModel) {
+        errorText = tr("The GeoFence polygon model is unavailable.");
+        return false;
+    }
+
+    if (_sourcePolygon) {
+        const int sourceIndex = _sourcePolygonIndex();
+        if (sourceIndex < 0) {
+            errorText = tr("The selected spray inclusion polygon was deleted.");
+            return false;
+        }
+        if (!_sourcePolygon->inclusion()) {
+            errorText = tr("The selected spray polygon is no longer an inclusion polygon.");
+            return false;
+        }
+        _loadedSourcePolygonIndex = sourceIndex;
+        return true;
+    }
+
+    if (!_loadedFromJson) {
+        errorText = tr("Select an inclusion polygon for the spray area.");
+        return false;
+    }
+
+    if (_sourcePolygonResolved) {
+        errorText = tr("The selected spray inclusion polygon was deleted.");
+        return false;
+    }
+
+    if (_sourcePolygonReferencePresent) {
+        if (_loadedSourcePolygonIndex < 0 || _loadedSourcePolygonIndex >= _polygonModel->count()) {
+            errorText = tr("The saved spray inclusion polygon index is out of range.");
+            return false;
+        }
+
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(_loadedSourcePolygonIndex);
+        if (!polygon) {
+            errorText = tr("The saved spray inclusion polygon reference is invalid.");
+            return false;
+        }
+        if (!polygon->inclusion()) {
+            errorText = tr("The saved spray polygon is not an inclusion polygon.");
+            return false;
+        }
+        _sourcePolygon = polygon;
+        _sourcePolygonResolved = true;
+        return true;
+    }
+
+    for (int index = 0; index < _polygonModel->count(); ++index) {
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(index);
+        if (polygon && polygon->inclusion() && polygon->isValid()) {
+            qCWarning(AgriculturalSprayComplexItemLog)
+                << "Legacy Agricultural Spray plan has no source polygon reference; using inclusion polygon index:" << index;
+            _sourcePolygon = polygon;
+            _loadedSourcePolygonIndex = index;
+            _sourcePolygonResolved = true;
+            return true;
+        }
+    }
+
+    errorText = tr("The legacy spray plan has no valid inclusion polygon.");
+    return false;
 }
 
 void AgriculturalSprayComplexItem::_scheduleRebuild()
@@ -362,7 +504,7 @@ bool AgriculturalSprayComplexItem::_validateCurrentFacts(QString& errorText)
         errorText = tr("Entry corner is outside the supported range.");
         return false;
     }
-    if (dropletClassValue > static_cast<uint>(UltraCoarse)) {
+    if (dropletClassValue < static_cast<uint>(Fine) || dropletClassValue > static_cast<uint>(Coarse)) {
         errorText = tr("Droplet class is outside the supported range.");
         return false;
     }
@@ -384,65 +526,24 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
         return false;
     }
 
-    const std::size_t shapeCount =
-        static_cast<std::size_t>(_polygonModel->count()) + static_cast<std::size_t>(_circleModel->count());
-    if (shapeCount > input.limits.maxShapes) {
-        failureStatus = GenerationError;
-        errorText = tr("GeoFence shape count exceeds the planner limit of %1.")
-                        .arg(static_cast<qulonglong>(input.limits.maxShapes));
+    if (!_resolveSourcePolygon(errorText)) {
+        failureStatus = _sourcePolygonReferencePresent ? GenerationError : NoInclusion;
         return false;
     }
-
-    bool hasInclusion = false;
-    for (int index = 0; index < _polygonModel->count(); ++index) {
-        const QGCFencePolygon* const polygon = qobject_cast<const QGCFencePolygon*>((*_polygonModel)[index]);
-        if (!polygon) {
-            failureStatus = GenerationError;
-            errorText = tr("GeoFence polygon model contains an invalid object.");
-            return false;
-        }
-        if (!polygon->inclusion()) {
-            continue;
-        }
-        hasInclusion = true;
-        for (const QGeoCoordinate& coordinate : polygon->coordinateList()) {
-            if (finiteCoordinate(coordinate)) {
-                origin = horizontalCoordinate(coordinate);
-                break;
-            }
-        }
-        if (origin.isValid()) {
+    if (_sourcePolygon->traceMode() || !_sourcePolygon->isValid()) {
+        failureStatus = InvalidArea;
+        errorText = tr("The selected spray inclusion polygon trace is incomplete.");
+        return false;
+    }
+    for (const QGeoCoordinate& coordinate : _sourcePolygon->coordinateList()) {
+        if (finiteCoordinate(coordinate)) {
+            origin = horizontalCoordinate(coordinate);
             break;
         }
     }
-
-    if (!origin.isValid()) {
-        for (int index = 0; index < _circleModel->count(); ++index) {
-            QGCFenceCircle* const circle = qobject_cast<QGCFenceCircle*>((*_circleModel)[index]);
-            if (!circle) {
-                failureStatus = GenerationError;
-                errorText = tr("GeoFence circle model contains an invalid object.");
-                return false;
-            }
-            if (!circle->inclusion()) {
-                continue;
-            }
-            hasInclusion = true;
-            if (finiteCoordinate(circle->center())) {
-                origin = horizontalCoordinate(circle->center());
-                break;
-            }
-        }
-    }
-
-    if (!hasInclusion) {
-        failureStatus = NoInclusion;
-        errorText = tr("At least one inclusion polygon or circle is required.");
-        return false;
-    }
     if (!origin.isValid()) {
         failureStatus = InvalidArea;
-        errorText = tr("No inclusion shape contains a valid geographic coordinate.");
+        errorText = tr("The selected spray inclusion polygon has no valid geographic coordinate.");
         return false;
     }
 
@@ -455,9 +556,22 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
         }
         return AgriculturalSpray::Point{north, east};
     };
+    input.inclusions.reserve(1);
+    AgriculturalSpray::Polygon sourcePolygon;
+    const QList<QGeoCoordinate> sourceCoordinates = _sourcePolygon->coordinateList();
+    if (static_cast<std::size_t>(sourceCoordinates.count()) > input.limits.maxShapeVertices) {
+        failureStatus = GenerationError;
+        errorText = tr("The selected spray inclusion polygon exceeds the planner vertex limit of %1.")
+                        .arg(static_cast<qulonglong>(input.limits.maxShapeVertices));
+        return false;
+    }
+    sourcePolygon.vertices.reserve(static_cast<std::size_t>(sourceCoordinates.count()));
+    for (const QGeoCoordinate& coordinate : sourceCoordinates) {
+        sourcePolygon.vertices.push_back(localPoint(coordinate));
+    }
+    const std::vector<AgriculturalSpray::Point> sourcePoints = sourcePolygon.vertices;
+    input.inclusions.emplace_back(std::move(sourcePolygon));
 
-    input.inclusions.reserve(shapeCount);
-    input.exclusions.reserve(shapeCount);
     for (int index = 0; index < _polygonModel->count(); ++index) {
         const QGCFencePolygon* const fencePolygon = qobject_cast<const QGCFencePolygon*>((*_polygonModel)[index]);
         if (!fencePolygon) {
@@ -466,7 +580,20 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
             return false;
         }
 
+        if (fencePolygon == _sourcePolygon || fencePolygon->inclusion()) {
+            continue;
+        }
+
         const QList<QGeoCoordinate> coordinates = fencePolygon->coordinateList();
+        std::vector<AgriculturalSpray::Point> candidatePoints;
+        candidatePoints.reserve(static_cast<std::size_t>(coordinates.count()));
+        for (const QGeoCoordinate& coordinate : coordinates) {
+            candidatePoints.push_back(localPoint(coordinate));
+        }
+        if (!AgriculturalSpray::polygonsOverlapOrContain(sourcePoints, candidatePoints)) {
+            continue;
+        }
+
         if (static_cast<std::size_t>(coordinates.count()) > input.limits.maxShapeVertices) {
             failureStatus = GenerationError;
             errorText = tr("A GeoFence polygon exceeds the planner vertex limit of %1.")
@@ -475,12 +602,14 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
         }
 
         AgriculturalSpray::Polygon polygon;
-        polygon.vertices.reserve(static_cast<std::size_t>(coordinates.count()));
-        for (const QGeoCoordinate& coordinate : coordinates) {
-            polygon.vertices.push_back(localPoint(coordinate));
+        polygon.vertices = std::move(candidatePoints);
+        if (input.inclusions.size() + input.exclusions.size() + 1 > input.limits.maxShapes) {
+            failureStatus = GenerationError;
+            errorText = tr("GeoFence shape count exceeds the planner limit of %1.")
+                            .arg(static_cast<qulonglong>(input.limits.maxShapes));
+            return false;
         }
-
-        (fencePolygon->inclusion() ? input.inclusions : input.exclusions).emplace_back(std::move(polygon));
+        input.exclusions.emplace_back(std::move(polygon));
     }
 
     for (int index = 0; index < _circleModel->count(); ++index) {
@@ -495,7 +624,17 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
             .center = localPoint(fenceCircle->center()),
             .radius = fenceCircle->radius()->rawValue().toDouble(),
         };
-        (fenceCircle->inclusion() ? input.inclusions : input.exclusions).emplace_back(circle);
+        if (fenceCircle->inclusion() ||
+            !AgriculturalSpray::circleOverlapsOrContains(sourcePoints, circle.center, circle.radius)) {
+            continue;
+        }
+        if (input.inclusions.size() + input.exclusions.size() + 1 > input.limits.maxShapes) {
+            failureStatus = GenerationError;
+            errorText = tr("GeoFence shape count exceeds the planner limit of %1.")
+                            .arg(static_cast<qulonglong>(input.limits.maxShapes));
+            return false;
+        }
+        input.exclusions.emplace_back(circle);
     }
 
     input.spacing = _lineSpacingFact.rawValue().toDouble();
@@ -509,6 +648,10 @@ void AgriculturalSprayComplexItem::_rebuildQueued()
 {
     _rebuildPending = false;
     if (_loading) {
+        return;
+    }
+    if (!_missionController || !_missionController->visualItems() ||
+        _missionController->visualItems()->indexOf(this) < 0) {
         return;
     }
 
@@ -875,6 +1018,21 @@ void AgriculturalSprayComplexItem::setSequenceNumber(int sequenceNumber)
 
 void AgriculturalSprayComplexItem::save(QJsonArray& missionItems)
 {
+    QString sourceError;
+    if (!_resolveSourcePolygon(sourceError)) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Cannot save Agricultural Spray item" << "error:" << sourceError;
+        _setStatus(GenerationError, sourceError);
+        return;
+    }
+
+    const int sourcePolygonIndex = _sourcePolygonIndex();
+    if (sourcePolygonIndex < 0) {
+        const QString error = tr("The selected spray inclusion polygon is no longer available.");
+        qCWarning(AgriculturalSprayComplexItemLog) << "Cannot save Agricultural Spray item" << "error:" << error;
+        _setStatus(GenerationError, error);
+        return;
+    }
+
     QJsonObject saveObject;
     saveObject[JsonParsing::jsonVersionKey] = _jsonVersion;
     saveObject[VisualMissionItem::jsonTypeKey] = VisualMissionItem::jsonTypeComplexItemValue;
@@ -885,6 +1043,7 @@ void AgriculturalSprayComplexItem::save(QJsonArray& missionItems)
     saveObject[entryCornerName] = static_cast<int>(_entryCornerFact.rawValue().toUInt());
     saveObject[dropletClassName] = static_cast<int>(_dropletClassFact.rawValue().toUInt());
     saveObject[applicationRateName] = _applicationRateFact.rawValue().toDouble();
+    saveObject[_sourcePolygonIndexKey] = sourcePolygonIndex;
     missionItems.append(saveObject);
 }
 
@@ -911,6 +1070,35 @@ bool AgriculturalSprayComplexItem::_validateLoadValue(Fact& fact, const QJsonVal
     return true;
 }
 
+bool AgriculturalSprayComplexItem::_normalizeLoadedDropletClass(QJsonValue jsonValue, QVariant& typedValue,
+                                                                 QString& errorText)
+{
+    if (!jsonValue.isDouble() || !std::isfinite(jsonValue.toDouble()) ||
+        jsonValue.toDouble() != std::floor(jsonValue.toDouble())) {
+        errorText = tr("Droplet class must be an integer enum value.");
+        return false;
+    }
+
+    const int dropletClass = jsonValue.toInt();
+    if (dropletClass == 0) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Normalizing legacy droplet class 0 to Fine";
+        typedValue = static_cast<uint>(Fine);
+        return true;
+    }
+    if (dropletClass >= 4 && dropletClass <= 6) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Normalizing legacy droplet class" << dropletClass << "to Coarse";
+        typedValue = static_cast<uint>(Coarse);
+        return true;
+    }
+    if (dropletClass < static_cast<int>(Fine) || dropletClass > static_cast<int>(Coarse)) {
+        errorText = tr("Droplet class is outside the supported range.");
+        return false;
+    }
+
+    typedValue = static_cast<uint>(dropletClass);
+    return true;
+}
+
 bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int sequenceNumber, QString& errorString)
 {
     _invalidateRoute();
@@ -925,6 +1113,7 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         {entryCornerName, QJsonValue::Double, true},
         {dropletClassName, QJsonValue::Double, true},
         {applicationRateName, QJsonValue::Double, true},
+        {_sourcePolygonIndexKey, QJsonValue::Double, false},
     };
 
     if (!JsonParsing::validateKeysStrict(complexObject, keyInfoList, errorString)) {
@@ -966,12 +1155,39 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
     std::array<QVariant, 6> values;
 
     for (std::size_t index = 0; index < facts.size(); ++index) {
+        if (facts[index] == &_dropletClassFact) {
+            if (!_normalizeLoadedDropletClass(complexObject[keys[index]], values[index], errorString)) {
+                qCWarning(AgriculturalSprayComplexItemLog) << "JSON Fact validation failed"
+                                                           << "name:" << facts[index]->name() << "error:" << errorString;
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            continue;
+        }
         if (!_validateLoadValue(*facts[index], complexObject[keys[index]], values[index], errorString)) {
             qCWarning(AgriculturalSprayComplexItemLog) << "JSON Fact validation failed"
                                                        << "name:" << facts[index]->name() << "error:" << errorString;
             _setStatus(GenerationError, errorString);
             return false;
         }
+    }
+
+    _sourcePolygon.clear();
+    _loadedFromJson = true;
+    _sourcePolygonReferencePresent = complexObject.contains(_sourcePolygonIndexKey);
+    _loadedSourcePolygonIndex = -1;
+    _sourcePolygonResolved = false;
+    if (_sourcePolygonReferencePresent) {
+        const double sourceIndex = complexObject[_sourcePolygonIndexKey].toDouble();
+        if (!std::isfinite(sourceIndex) || sourceIndex != std::floor(sourceIndex) || sourceIndex < 0.0 ||
+            sourceIndex > static_cast<double>(std::numeric_limits<int>::max())) {
+            errorString = tr("The spray inclusion polygon index must be a non-negative integer.");
+            qCWarning(AgriculturalSprayComplexItemLog) << "JSON source polygon validation failed"
+                                                       << "error:" << errorString;
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        _loadedSourcePolygonIndex = static_cast<int>(sourceIndex);
     }
 
     _loading = true;

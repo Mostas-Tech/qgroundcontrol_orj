@@ -18,6 +18,12 @@ Item {
     readonly property var _routeSegments: _buildRouteSegments()
     readonly property var _entryCoordinate: _missionItem ? _missionItem.entryCoordinate : QtPositioning.coordinate()
     readonly property var _exitCoordinate:  _missionItem ? _missionItem.exitCoordinate : QtPositioning.coordinate()
+    readonly property color sprayLegColor: qgcPal.colorGreen
+    readonly property color transitSegmentColor: qgcPal.colorOrange
+    readonly property real sprayLegWidthMultiplier: 0.5
+    readonly property real transitSegmentWidthMultiplier: 0.4
+    readonly property real sprayLegLineWidth: ScreenTools.defaultFontPixelWidth * sprayLegWidthMultiplier
+    readonly property real transitSegmentLineWidth: ScreenTools.defaultFontPixelWidth * transitSegmentWidthMultiplier
     property var _routeGroup
 
     objectName: "agriculturalSprayMapVisual"
@@ -72,10 +78,10 @@ Item {
                     required property var modelData
                     required property int index
 
-                    objectName: "agriculturalSprayRouteSegment_" + index
+                    objectName: "agriculturalSprayRouteSegment_" + (modelData.sprayLeg ? "spray_" : "transit_") + index
                     path:       [modelData.fromCoordinate, modelData.toCoordinate]
-                    line.color: modelData.sprayLeg ? qgcPal.colorGreen : qgcPal.mapMissionTrajectory
-                    line.width: ScreenTools.defaultFontPixelWidth * (modelData.sprayLeg ? 0.35 : 0.2)
+                    line.color: modelData.sprayLeg ? _root.sprayLegColor : _root.transitSegmentColor
+                    line.width: modelData.sprayLeg ? _root.sprayLegLineWidth : _root.transitSegmentLineWidth
                     opacity:    _root.opacity
                     z:          QGroundControl.zOrderWaypointLines
                 }
@@ -122,6 +128,9 @@ Item {
     }
 
     Component.onCompleted: {
+        if (!map || !map.addMapItemGroup) {
+            return
+        }
         _routeGroup = routeViewComponent.createObject(map)
         map.addMapItemGroup(_routeGroup)
         objectManager.createObjects([entryLabelComponent, exitLabelComponent], map, true)
