@@ -65,7 +65,11 @@ Hard rules (code-reviewer treats violations as must-fix):
 Task-specific agent definitions live in [.github/agents/](.github/agents/README.md) — the
 **canonical source**, used directly by VS Code Copilot (Claude and OpenAI models alike). Claude
 Code invokes the same agents through thin wrappers in `.claude/agents/`, which only point back to
-the canonical files.
+the canonical files. Codex invokes the specialist roster through `.codex/agents/*.toml` adapters,
+which first load `.codex/BASE_INSTRUCTIONS.md` and the matching canonical file. Codex keeps
+dispatcher orchestration in its primary session: it adopts `.github/agents/dispatcher.agent.md`
+for whole jobs and never spawns a separate dispatcher agent, avoiding nested orchestration and
+context replay.
 
 | Agent | Use for |
 | ----- | ------- |
@@ -80,10 +84,13 @@ Rules for the agent files themselves:
 
 - Every agent operates **under this AGENTS.md** — agent files add task-specific guidance on top of
   these rules, never instead of them.
-- To change an agent, edit `.github/agents/<name>.agent.md`. Never put rules only in the
-  `.claude/agents/` wrapper — it must stay a pointer.
-- Adding/renaming an agent requires updating both directories plus the table above and the one in
-  [.github/agents/README.md](.github/agents/README.md).
+- To change an agent, edit `.github/agents/<name>.agent.md`. Never put rules only in a host
+  adapter: `.claude/agents/` wrappers and `.codex/agents/` TOML files must point to the canonical
+  rules.
+- Adding/renaming a specialist agent requires updating the canonical file, both host adapter
+  directories, the table above, and the one in [.github/agents/README.md](.github/agents/README.md).
+  `dispatcher` remains a Claude primary-session command and a Codex primary-session role; do not
+  add a `.claude/agents/` or `.codex/agents/` dispatcher adapter.
 
 ## Golden Rules (enforced — violations fail CI)
 
@@ -133,6 +140,8 @@ The `just` recipes are the canonical workflow where they are available — see
 read [.github/skills/windows-dev-env/SKILL.md](.github/skills/windows-dev-env/SKILL.md) first and
 reuse its configured build tree. [.github/ci-overview.md](.github/ci-overview.md) documents how CI
 invokes builds and tests; match CI, don't guess.
+For Codex, `.codex/BASE_INSTRUCTIONS.md` is the shared command baseline for the primary session
+and every specialist; follow it before classifying a sandbox or environment failure.
 
 ```bash
 just configure          # CMake configure (pulls submodules first)
