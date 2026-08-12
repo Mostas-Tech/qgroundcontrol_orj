@@ -67,10 +67,19 @@ class QGCOptions : public QObject
     Q_PROPERTY(bool showSensorCalibrationGyro       READ showSensorCalibrationGyro      NOTIFY showSensorCalibrationGyroChanged)
     Q_PROPERTY(bool showSensorCalibrationLevel      READ showSensorCalibrationLevel     NOTIFY showSensorCalibrationLevelChanged)
     Q_PROPERTY(bool showSimpleMissionStart          READ showSimpleMissionStart         NOTIFY showSimpleMissionStartChanged)
-    Q_PROPERTY(bool useMobileFileDialog             READ useMobileFileDialog            CONSTANT)
+    Q_PROPERTY(bool showPlanInfo                    READ showPlanInfo                    CONSTANT)
+    Q_PROPERTY(bool showPlanDefaults                READ showPlanDefaults                CONSTANT)
+    Q_PROPERTY(bool showInitialCameraSettings       READ showInitialCameraSettings       CONSTANT)
+    Q_PROPERTY(bool showRallyPoints                 READ showRallyPoints                 CONSTANT)
+    Q_PROPERTY(bool showTransform                   READ showTransform                   CONSTANT)
+    Q_PROPERTY(bool showRallyLayer                  READ showRallyLayer                  CONSTANT)
+    Q_PROPERTY(bool useMobileFileDialog             READ useMobileFileDialog             CONSTANT)
     Q_PROPERTY(double toolbarHeightMultiplier       READ toolbarHeightMultiplier        CONSTANT)
     Q_PROPERTY(float devicePixelDensity             READ devicePixelDensity             NOTIFY devicePixelDensityChanged)
     Q_PROPERTY(float devicePixelRatio               READ devicePixelRatio               NOTIFY devicePixelRatioChanged)
+    Q_PROPERTY(QColor geoFencePolygonBorderColor    READ geoFencePolygonBorderColor      CONSTANT)
+    Q_PROPERTY(bool newGeoFenceCircleInclusion      READ newGeoFenceCircleInclusion      CONSTANT)
+    Q_PROPERTY(double newGeoFenceCircleRadius       READ newGeoFenceCircleRadius         CONSTANT)
     Q_PROPERTY(const QGCFlyViewOptions *flyView     READ flyViewOptions                 CONSTANT)
     Q_PROPERTY(QString firmwareUpgradeSingleURL     READ firmwareUpgradeSingleURL       CONSTANT)
     Q_PROPERTY(QStringList surveyBuiltInPresetNames READ surveyBuiltInPresetNames       CONSTANT)
@@ -130,6 +139,17 @@ public:
     virtual bool showOfflineMapImport() const { return true; }
     virtual bool showPX4LogTransferOptions() const { return true; }
     virtual bool showSimpleMissionStart() const { return false; }
+    virtual bool showPlanInfo() const { return true; }
+    virtual bool showPlanDefaults() const { return true; }
+    virtual bool showInitialCameraSettings() const { return true; }
+    virtual bool showRallyPoints() const { return true; }
+    virtual bool showTransform() const { return true; }
+    virtual bool showRallyLayer() const { return true; }
+    virtual QColor geoFencePolygonBorderColor() const { return QColor(QStringLiteral("orange")); }
+    virtual bool newGeoFenceCircleInclusion() const { return true; }
+
+    /// A non-positive value preserves the viewport-derived standard circle radius.
+    virtual double newGeoFenceCircleRadius() const { return 0.0; }
 
     /// Desktop builds save the main application size and position on close (and restore it on open)
     virtual bool enableSaveMainWindowPosition() const { return true; }

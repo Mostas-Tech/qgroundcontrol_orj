@@ -39,6 +39,12 @@ Item {
     readonly property int _layerFence: PlanEditLayers.layerFence
     readonly property int _layerRally: PlanEditLayers.layerRally
 
+    function _setEditingLayer(layer) {
+        if (layer !== _layerRally || PlanEditLayers.infoForNodeType("rallyGroup")) {
+            _editingLayer = layer
+        }
+    }
+
     onVisibleChanged: {
         if(visible) {
             editorMap.zoomLevel = QGroundControl.flightMapZoom
@@ -542,7 +548,7 @@ Item {
             width: _rightPanelWidth
             planMasterController: _planMasterController
             editorMap: editorMap
-            onEditingLayerChangeRequested: (layer) => _editingLayer = layer
+            onEditingLayerChangeRequested: (layer) => _root._setEditingLayer(layer)
         }
 
         // Layer switching icons — only active icon visible; click to expand choices leftward

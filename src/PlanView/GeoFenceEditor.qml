@@ -120,14 +120,21 @@ Rectangle {
                 }
 
                 QGCButton {
+                    objectName:         "planTree_geoFenceAddCircleButton"
                     Layout.fillWidth:   true
                     text:               qsTr("Circular Fence")
 
                     onClicked: {
-                        var rect = Qt.rect(flightMap.centerViewport.x, flightMap.centerViewport.y, flightMap.centerViewport.width, flightMap.centerViewport.height)
-                        var topLeftCoord = flightMap.toCoordinate(Qt.point(rect.x, rect.y), false /* clipToViewPort */)
-                        var bottomRightCoord = flightMap.toCoordinate(Qt.point(rect.x + rect.width, rect.y + rect.height), false /* clipToViewPort */)
-                        myGeoFenceController.addInclusionCircle(topLeftCoord, bottomRightCoord)
+                        var options = QGroundControl.corePlugin.options
+                        if (options.newGeoFenceCircleRadius > 0) {
+                            myGeoFenceController.addCircle(flightMap.center, options.newGeoFenceCircleRadius,
+                                                           options.newGeoFenceCircleInclusion)
+                        } else {
+                            var rect = Qt.rect(flightMap.centerViewport.x, flightMap.centerViewport.y, flightMap.centerViewport.width, flightMap.centerViewport.height)
+                            var topLeftCoord = flightMap.toCoordinate(Qt.point(rect.x, rect.y), false /* clipToViewPort */)
+                            var bottomRightCoord = flightMap.toCoordinate(Qt.point(rect.x + rect.width, rect.y + rect.height), false /* clipToViewPort */)
+                            myGeoFenceController.addInclusionCircle(topLeftCoord, bottomRightCoord)
+                        }
                     }
                 }
 

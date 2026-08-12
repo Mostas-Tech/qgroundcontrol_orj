@@ -31,6 +31,7 @@ Item {
     property var    _savedVertices:             [ ]
     property bool   _savedCircleMode
     property bool   _isVertexBeingDragged:      false
+    property bool   _hasBeenInteractive:        false
 
     property real _zorderDragHandle:    QGroundControl.zOrderMapItems + 3   // Highest to prevent splitting when items overlap
     property real _zorderSplitHandle:   QGroundControl.zOrderMapItems + 2
@@ -143,13 +144,17 @@ Item {
 
     function _handleInteractiveChanged() {
         if (interactive) {
+            _hasBeenInteractive = true
             addEditingVisuals()
             addToolbarVisuals()
         } else {
-            mapPolygon.traceMode = false
+            if (_hasBeenInteractive) {
+                mapPolygon.traceMode = false
+            }
             removeEditingVisuals()
             removeToolVisuals()
         }
+        _updateTraceMouseArea()
     }
 
     function _saveCurrentVertices() {
@@ -170,6 +175,36 @@ Item {
         _circleMode = _savedCircleMode
     }
 
+    function _discardIncompleteTrace() {
+        if (mapPolygon.count < 3) {
+            if (_savedVertices.length > 0) {
+                _restorePreviousVertices()
+            } else {
+                mapPolygon.clear()
+            }
+        }
+    }
+
+    function _handleTraceModeChanged(traceMode) {
+        if (traceMode) {
+            _instructionText = _traceText
+        } else {
+            _discardIncompleteTrace()
+            _instructionText = _polygonToolsText
+        }
+        _updateTraceMouseArea()
+    }
+
+    function _updateTraceMouseArea() {
+        if (mapPolygon.traceMode && interactive) {
+            if (_objMgrTraceVisuals.empty) {
+                _objMgrTraceVisuals.createObject(traceMouseAreaComponent, mapControl, false)
+            }
+        } else {
+            _objMgrTraceVisuals.destroyObjects()
+        }
+    }
+
     onInteractiveChanged: _handleInteractiveChanged()
 
     on_CircleModeChanged: {
@@ -183,21 +218,21 @@ Item {
     Connections {
         target: mapPolygon
         function onTraceModeChanged(traceMode) {
-            if (traceMode) {
-                _instructionText = _traceText
-                _objMgrTraceVisuals.createObject(traceMouseAreaComponent, mapControl, false)
-            } else {
-                _instructionText = _polygonToolsText
-                _objMgrTraceVisuals.destroyObjects()
-            }
+            _root._handleTraceModeChanged(traceMode)
         }
     }
 
     Component.onCompleted: {
         addCommonVisuals()
         _handleInteractiveChanged()
+        if (mapPolygon.traceMode) {
+            _handleTraceModeChanged(true)
+        }
     }
-    Component.onDestruction: mapPolygon.traceMode = false
+    Component.onDestruction: {
+        _discardIncompleteTrace()
+        mapPolygon.traceMode = false
+    }
 
     QGCDynamicObjectManager { id: _objMgrCommonVisuals }
     QGCDynamicObjectManager { id: _objMgrToolVisuals }
@@ -665,9 +700,6 @@ Item {
                 text:               mapPolygon.traceMode ? qsTr("Done Tracing") : qsTr("Trace")
                 onClicked: {
                     if (mapPolygon.traceMode) {
-                        if (mapPolygon.count < 3) {
-                            _restorePreviousVertices()
-                        }
                         mapPolygon.traceMode = false
                     } else {
                         _saveCurrentVertices()

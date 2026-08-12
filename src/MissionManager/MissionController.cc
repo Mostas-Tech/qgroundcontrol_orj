@@ -434,7 +434,7 @@ VisualMissionItem* MissionController::insertComplexMissionItem(QString itemName,
         }
     }
 
-    _insertComplexMissionItemWorker(mapCenterCoordinate, newItem, visualItemIndex, makeCurrentItem);
+    _insertComplexMissionItemWorker(mapCenterCoordinate, newItem, visualItemIndex, makeCurrentItem, true /* beginInteractiveCreation */);
 
     return newItem;
 }
@@ -461,7 +461,7 @@ VisualMissionItem* MissionController::insertComplexMissionItemFromKMLOrSHP(QStri
         return nullptr;
     }
 
-    _insertComplexMissionItemWorker(QGeoCoordinate(), newItem, visualItemIndex, makeCurrentItem);
+    _insertComplexMissionItemWorker(QGeoCoordinate(), newItem, visualItemIndex, makeCurrentItem, false /* beginInteractiveCreation */);
 
     return newItem;
 }
@@ -476,7 +476,8 @@ void MissionController::requestPlanEditLayer(const QString& layerNodeType)
     emit planEditLayerRequested(layerNodeType);
 }
 
-void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& mapCenterCoordinate, ComplexMissionItem* complexItem, int visualItemIndex, bool makeCurrentItem)
+void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& mapCenterCoordinate, ComplexMissionItem* complexItem,
+                                                        int visualItemIndex, bool makeCurrentItem, bool beginInteractiveCreation)
 {
     int sequenceNumber = _nextSequenceNumber();
     bool surveyStyleItem = qobject_cast<SurveyComplexItem*>(complexItem) ||
@@ -531,6 +532,9 @@ void MissionController::_insertComplexMissionItemWorker(const QGeoCoordinate& ma
         setCurrentPlanViewSeqNum(complexItem->sequenceNumber(), true);
     }
     _firstItemAdded();
+    if (beginInteractiveCreation) {
+        complexItem->beginInteractiveCreation();
+    }
 }
 
 int MissionController::visualItemIndexForObject(QObject* object) const

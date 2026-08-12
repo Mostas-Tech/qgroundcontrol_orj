@@ -14,6 +14,8 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
 
+#include <cmath>
+
 QGC_LOGGING_CATEGORY(GeoFenceControllerLog, "PlanManager.GeoFenceController")
 
 QMap<QString, FactMetaData*> GeoFenceController::_metaDataMap;
@@ -427,11 +429,38 @@ void GeoFenceController::addInclusionCircle(QGeoCoordinate topLeft, QGeoCoordina
     QGeoCoordinate centerTopEdge = topLeft.atDistanceAndAzimuth(halfWidthMeters, 90);
     QGeoCoordinate center(centerLeftEdge.latitude(), centerTopEdge.longitude());
 
-    QGCFenceCircle* circle = new QGCFenceCircle(center, radius, true /* inclusion */, this);
-    _circles.append(circle);
+    QGCFenceCircle* const circle = addCircle(center, radius, true /* inclusion */);
+    if (!circle) {
+        return;
+    }
 
     clearAllInteractive();
     circle->setInteractive(true);
+}
+
+QGCFencePolygon* GeoFenceController::addBlankInclusionPolygon()
+{
+    QGCFencePolygon* const polygon = new QGCFencePolygon(true /* inclusion */, this);
+    _polygons.append(polygon);
+    clearAllInteractive();
+    polygon->setInteractive(true);
+    return polygon;
+}
+
+QGCFenceCircle* GeoFenceController::addCircle(QGeoCoordinate center, double radius, bool inclusion)
+{
+    if (!center.isValid() || !std::isfinite(center.latitude()) || !std::isfinite(center.longitude())) {
+        qCWarning(GeoFenceControllerLog) << "Cannot add GeoFence circle with an invalid center";
+        return nullptr;
+    }
+    if (!std::isfinite(radius) || radius <= 0.0) {
+        qCWarning(GeoFenceControllerLog) << "Cannot add GeoFence circle with an invalid radius:" << radius;
+        return nullptr;
+    }
+
+    QGCFenceCircle* const circle = new QGCFenceCircle(center, radius, inclusion, this);
+    _circles.append(circle);
+    return circle;
 }
 
 void GeoFenceController::deletePolygon(int index)

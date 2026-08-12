@@ -94,6 +94,9 @@ public:
     virtual void applyPreviousAltitudeFrame(QGroundControlQmlGlobal::AltitudeFrame prevAltFrame, double prevAltitude)
         { Q_UNUSED(prevAltFrame); Q_UNUSED(prevAltitude); }
 
+    /// Called after interactive insertion and current-item setup. The default implementation is a no-op.
+    virtual void beginInteractiveCreation() { }
+
     bool presetsSupported   (void) { return !presetsSettingsGroup().isEmpty(); }
     bool isIncomplete       (void) const { return _isIncomplete; }
 

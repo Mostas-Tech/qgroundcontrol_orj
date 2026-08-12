@@ -23,12 +23,12 @@ Item {
     property var    _paramCircleFenceComponent
     property var    _polygons:                  myGeoFenceController.polygons
     property var    _circles:                   myGeoFenceController.circles
-    property color  _borderColor:               "orange"
+    property color  _borderColor:               QGroundControl.corePlugin.options.geoFencePolygonBorderColor
     property int    _borderWidthInclusion:      2
     property int    _borderWidthExclusion:      0
-    property color  _interiorColorExclusion:    "orange"
+    property color  _interiorColorExclusion:    QGroundControl.globalPalette.colorRed
     property color  _interiorColorInclusion:    "transparent"
-    property real   _interiorOpacityExclusion:  0.2 * opacity
+    property real   _interiorOpacityExclusion:  0.3 * opacity
     property real   _interiorOpacityInclusion:  1 * opacity
 
     function addPolygon(inclusionPolygon) {
@@ -90,7 +90,7 @@ Item {
             mapControl:         map
             mapPolygon:         object
             borderWidth:        object.inclusion ? _borderWidthInclusion : _borderWidthExclusion
-            borderColor:        _borderColor
+            borderColor:        object.inclusion ? _borderColor : QGroundControl.globalPalette.colorRed
             interiorColor:      object.inclusion ? _interiorColorInclusion : _interiorColorExclusion
             interiorOpacity:    object.inclusion ? _interiorOpacityInclusion : _interiorOpacityExclusion
             interactive:        _root.interactive && mapPolygon && mapPolygon.interactive
