@@ -6,6 +6,7 @@ import QtPositioning
 
 import QGroundControl
 import QGroundControl.Controls
+import QGroundControl.FlightMap
 
 Item {
     id: _root
@@ -18,6 +19,9 @@ Item {
     readonly property var _routeSegments: _buildRouteSegments()
     readonly property var _entryCoordinate: _missionItem ? _missionItem.entryCoordinate : QtPositioning.coordinate()
     readonly property var _exitCoordinate:  _missionItem ? _missionItem.exitCoordinate : QtPositioning.coordinate()
+    readonly property bool _showDirectionSelection: interactive && _missionItem
+                                                    && !_missionItem.sourcePolygonTraceMode
+                                                    && _missionItem.sourcePolygonCoordinates.length > 2
     readonly property color sprayLegColor: qgcPal.colorGreen
     readonly property color transitSegmentColor: qgcPal.colorOrange
     readonly property real sprayLegWidthMultiplier: 0.5
@@ -71,6 +75,65 @@ Item {
         MapItemGroup {
             objectName: "agriculturalSprayRoute"
 
+            MapPolyline {
+                objectName: "agriculturalSprayDirectionEdge"
+                path:       [_root._missionItem.directionEdgeStart, _root._missionItem.directionEdgeEnd]
+                line.color: qgcPal.colorBlue
+                line.width: ScreenTools.defaultFontPixelWidth * 0.7
+                visible:    _root._showDirectionSelection
+                            && _root._missionItem.directionEdgeStart.isValid
+                            && _root._missionItem.directionEdgeEnd.isValid
+                opacity:    _root.opacity
+                z:          QGroundControl.zOrderMapItems + 1
+            }
+
+            MapLineArrow {
+                objectName:    "agriculturalSprayDirectionArrow"
+                fromCoord:     _root._missionItem.directionEdgeStart
+                toCoord:       _root._missionItem.directionEdgeEnd
+                arrowPosition: 3
+                visible:       _root._showDirectionSelection
+                               && fromCoord.isValid
+                               && toCoord.isValid
+                opacity:       _root.opacity
+                z:             QGroundControl.zOrderMapItems + 2
+            }
+
+            MapItemView {
+                model: _root._missionItem ? _root._missionItem.sourcePolygonCoordinates : []
+
+                delegate: MapQuickItem {
+                    id: directionVertexMarker
+
+                    required property var modelData
+                    required property int index
+                    readonly property bool selected: index === _root._missionItem.directionVertexIndex
+
+                    objectName:    "agriculturalSprayDirectionVertex_" + index
+                    coordinate:    modelData
+                    visible:       _root._showDirectionSelection
+                    opacity:       _root.opacity
+                    z:             QGroundControl.zOrderMapItems + 3
+                    anchorPoint.x: sourceItem.width / 2
+                    anchorPoint.y: sourceItem.height / 2
+
+                    sourceItem: Rectangle {
+                        width:        directionVertexMarker.selected ? ScreenTools.defaultFontPixelHeight * 1.25
+                                                                    : ScreenTools.defaultFontPixelHeight
+                        height:       width
+                        radius:       width / 2
+                        color:        directionVertexMarker.selected ? qgcPal.colorGreen : qgcPal.mapWidgetBorderLight
+                        border.color: qgcPal.text
+                        border.width: Math.max(1, ScreenTools.defaultFontPixelWidth * 0.15)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: _root._missionItem.setDirectionVertexIndex(directionVertexMarker.index)
+                        }
+                    }
+                }
+            }
+
             MapItemView {
                 model: _root._routeSegments
 
@@ -84,6 +147,22 @@ Item {
                     line.width: modelData.sprayLeg ? _root.sprayLegLineWidth : _root.transitSegmentLineWidth
                     opacity:    _root.opacity
                     z:          QGroundControl.zOrderWaypointLines
+                }
+            }
+
+            MapItemView {
+                model: _root._routeSegments
+
+                delegate: MapLineArrow {
+                    required property var modelData
+                    required property int index
+
+                    objectName:    "agriculturalSprayRouteArrow_" + (modelData.sprayLeg ? "spray_" : "transit_") + index
+                    fromCoord:     modelData.fromCoordinate
+                    toCoord:       modelData.toCoordinate
+                    arrowPosition: 3
+                    opacity:       _root.opacity
+                    z:             QGroundControl.zOrderWaypointLines + 1
                 }
             }
         }

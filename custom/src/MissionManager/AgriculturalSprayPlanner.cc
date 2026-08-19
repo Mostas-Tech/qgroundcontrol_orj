@@ -1,13 +1,17 @@
 #include "AgriculturalSprayPlanner.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <initializer_list>
 #include <limits>
+#include <map>
 #include <numbers>
+#include <numeric>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -18,6 +22,7 @@ constexpr double DISTANCE_EPSILON = 1e-9;
 constexpr double PARAMETER_EPSILON = 1e-9;
 constexpr double MAXIMUM_COORDINATE = 1e7;
 constexpr double BOUNDARY_INSET = 1e-7;
+constexpr double OBSTACLE_CLEARANCE = 0.05;
 constexpr double ROUNDING_SAFETY_FACTOR = 16.0;
 
 struct Interval
@@ -371,6 +376,10 @@ struct Roadmap
 
 [[nodiscard]] bool prepareShapes(const PlannerInput& input, PreparedInput& prepared, std::string& error)
 {
+    const bool hasCornerEntry = input.entryPoint.has_value() || input.sweepDirection.has_value();
+    const bool validCornerEntry = input.entryPoint && input.sweepDirection && finitePoint(*input.entryPoint) &&
+                                  finitePoint(*input.sweepDirection) && length(*input.sweepDirection) > DISTANCE_EPSILON;
+    const PlannerCostModel& cost = input.costModel;
     if (input.inclusions.empty()) {
         error = "at least one inclusion shape is required";
         return false;
@@ -378,21 +387,32 @@ struct Roadmap
     if (!finiteCoordinate(input.spacing) || input.spacing <= DISTANCE_EPSILON ||
         !finiteCoordinate(input.gridAngleDegrees) || std::abs(input.gridAngleDegrees) > 360.0 ||
         !finiteCoordinate(input.circleChordError) || input.circleChordError <= 0.0 ||
-        !validEntryCorner(input.entryCorner)) {
-        error = "spacing, grid angle, circle chord error, or entry corner is invalid";
+        !validEntryCorner(input.entryCorner) || (hasCornerEntry && !validCornerEntry) ||
+        !finiteCoordinate(cost.spraySpeed) || cost.spraySpeed <= 0.0 || !finiteCoordinate(cost.transitSpeed) ||
+        cost.transitSpeed <= 0.0 || !finiteCoordinate(cost.acceleration) || cost.acceleration <= 0.0 ||
+        !finiteCoordinate(cost.yawRateDegrees) || cost.yawRateDegrees <= 0.0 ||
+        !finiteCoordinate(cost.yawThresholdDegrees) || cost.yawThresholdDegrees < 0.0 ||
+        !finiteCoordinate(cost.yawSettleSeconds) || cost.yawSettleSeconds < 0.0) {
+        error = "spacing, direction, circle chord error, entry corner, or route cost model is invalid";
         return false;
     }
     if (input.inclusions.size() + input.exclusions.size() > input.limits.maxShapes || input.limits.maxShapes == 0 ||
         input.limits.maxShapeVertices < 3 || input.limits.maxScanLines == 0 || input.limits.maxSprayLegs == 0 ||
         input.limits.maxVisibilityNodes < 2 || input.limits.maxTopologyRepresentatives == 0 ||
-        input.limits.maxRoutePoints == 0) {
+        input.limits.maxRoutePoints == 0 || input.limits.maxCoverageCells == 0 || input.limits.exactCellLimit == 0 ||
+        input.limits.exactCellLimit > 12) {
         error = "planner limits are invalid or shape count exceeds the limit";
         return false;
     }
 
-    const double radians = input.gridAngleDegrees * std::numbers::pi / 180.0;
-    prepared.frame.direction = {std::cos(radians), std::sin(radians)};
-    prepared.frame.normal = {-std::sin(radians), std::cos(radians)};
+    if (validCornerEntry) {
+        const double directionLength = length(*input.sweepDirection);
+        prepared.frame.direction = *input.sweepDirection * (1.0 / directionLength);
+    } else {
+        const double radians = input.gridAngleDegrees * std::numbers::pi / 180.0;
+        prepared.frame.direction = {std::cos(radians), std::sin(radians)};
+    }
+    prepared.frame.normal = {-prepared.frame.direction.east, prepared.frame.direction.north};
     prepared.limits = input.limits;
 
     auto appendShapes = [&](const std::vector<Shape>& shapes, bool inclusion, std::vector<PreparedShape>& target) {
@@ -405,7 +425,10 @@ struct Roadmap
                 }
                 vertices = polygon->vertices;
             } else {
-                const auto& circle = std::get<Circle>(shape);
+                Circle circle = std::get<Circle>(shape);
+                if (!inclusion) {
+                    circle.radius += OBSTACLE_CLEARANCE;
+                }
                 const auto approximation =
                     approximateCircle(circle, input.circleChordError, inclusion, prepared.frame, input.limits);
                 if (!approximation) {
@@ -816,11 +839,7 @@ struct Roadmap
     }
     center = center * (1.0 / static_cast<double>(shape.vertices.size()));
 
-    double extent = 0.0;
-    for (const Point& point : shape.vertices) {
-        extent = std::max(extent, distance(center, point));
-    }
-    const double clearance = std::max(1e-7, extent * 1e-8);
+    const double clearance = OBSTACLE_CLEARANCE;
     const double area = signedArea(shape.vertices);
 
     for (std::size_t index = 0; index < shape.vertices.size(); ++index) {
@@ -833,7 +852,12 @@ struct Roadmap
         const Point firstOutward = {sign * previousEdge.east, -sign * previousEdge.north};
         const Point secondOutward = {sign * nextEdge.east, -sign * nextEdge.north};
         const Point radial = current - center;
-        for (const Point& direction : {firstOutward, secondOutward, firstOutward + secondOutward, radial}) {
+        const Point previousUnit = previousEdge * (1.0 / length(previousEdge));
+        const Point nextUnit = nextEdge * (1.0 / length(nextEdge));
+        const Point firstOutwardUnit = firstOutward * (1.0 / length(firstOutward));
+        const Point secondOutwardUnit = secondOutward * (1.0 / length(secondOutward));
+        for (const Point& direction : {firstOutward, secondOutward, firstOutward + secondOutward, radial,
+                                       firstOutwardUnit - previousUnit, secondOutwardUnit + nextUnit}) {
             const double directionLength = length(direction);
             if (directionLength > DISTANCE_EPSILON) {
                 if (!addUniqueNode(nodes, current + direction * (clearance / directionLength), prepared)) {
@@ -916,7 +940,7 @@ struct Roadmap
 
     const double initialDirectionLength = length(*initialDirection);
     return initialDirectionLength <= DISTANCE_EPSILON ||
-           dot(point - start, *initialDirection) >= -DISTANCE_EPSILON * initialDirectionLength;
+           dot(point - start, *initialDirection) >= -OBSTACLE_CLEARANCE * initialDirectionLength;
 }
 
 [[nodiscard]] TransitResult findTransit(const Point& start, const Point& end, const PreparedInput& prepared,
@@ -1162,6 +1186,845 @@ struct CoverageResult
     return {connected ? CoverageStatus::Connected : CoverageStatus::Disconnected};
 }
 
+struct IndexedLeg
+{
+    SprayLeg leg;
+    std::size_t rowIndex = 0;
+    double minimumAlong = 0.0;
+    double maximumAlong = 0.0;
+};
+
+struct RouteCandidate
+{
+    std::vector<SprayLeg> legs;
+    std::vector<RoutePoint> route;
+    double distance = 0.0;
+    double sprayDistance = 0.0;
+    double transitDistance = 0.0;
+    double estimatedTime = 0.0;
+    std::size_t turnCount = 0;
+    bool valid = false;
+};
+
+[[nodiscard]] double pointToSegmentDistance(const Point& point, const Point& start, const Point& end)
+{
+    const Point segment = end - start;
+    const double squaredLength = dot(segment, segment);
+    const double parameter = squaredLength > DISTANCE_EPSILON * DISTANCE_EPSILON
+                                 ? std::clamp(dot(point - start, segment) / squaredLength, 0.0, 1.0)
+                                 : 0.0;
+    return distance(point, start + segment * parameter);
+}
+
+[[nodiscard]] double segmentHeading(const Point& start, const Point& end)
+{
+    const Point direction = end - start;
+    return std::atan2(direction.east, direction.north);
+}
+
+[[nodiscard]] double headingDeltaDegrees(double first, double second)
+{
+    double delta = std::remainder((second - first) * 180.0 / std::numbers::pi, 360.0);
+    if (delta < -180.0) {
+        delta += 360.0;
+    } else if (delta > 180.0) {
+        delta -= 360.0;
+    }
+    return std::abs(delta);
+}
+
+[[nodiscard]] double segmentTravelTime(double segmentLength, double speed, double acceleration)
+{
+    if (segmentLength <= DISTANCE_EPSILON) {
+        return 0.0;
+    }
+    const double accelerationDistance = speed * speed / acceleration;
+    if (segmentLength <= accelerationDistance) {
+        return 2.0 * std::sqrt(segmentLength / acceleration);
+    }
+    return 2.0 * speed / acceleration + (segmentLength - accelerationDistance) / speed;
+}
+
+[[nodiscard]] double turnTime(double firstHeading, double secondHeading, const PlannerCostModel& model,
+                              std::size_t& turnCount)
+{
+    const double delta = headingDeltaDegrees(firstHeading, secondHeading);
+    if (delta <= model.yawThresholdDegrees) {
+        return 0.0;
+    }
+    ++turnCount;
+    return delta / model.yawRateDegrees + model.yawSettleSeconds;
+}
+
+[[nodiscard]] bool appendRoutePoint(std::vector<RoutePoint>& route, const Point& point, RoutePointType type)
+{
+    if (!route.empty() && samePoint(route.back().position, point)) {
+        if (route.back().type == RoutePointType::Transit && type == RoutePointType::SprayStart) {
+            route.back().type = type;
+            return true;
+        }
+        return route.back().type == type;
+    }
+    route.push_back({point, type});
+    return true;
+}
+
+void calculateRouteMetrics(RouteCandidate& candidate, const PreparedInput& prepared, const PlannerCostModel& model)
+{
+    candidate.distance = 0.0;
+    candidate.sprayDistance = 0.0;
+    candidate.transitDistance = 0.0;
+    candidate.estimatedTime = 0.0;
+    candidate.turnCount = 0;
+    candidate.valid = candidate.route.size() >= 2 && !candidate.legs.empty();
+    std::optional<double> previousHeading;
+    for (std::size_t index = 1; index < candidate.route.size(); ++index) {
+        const Point& start = candidate.route[index - 1].position;
+        const Point& end = candidate.route[index].position;
+        const double segmentLength = distance(start, end);
+        if (segmentLength <= DISTANCE_EPSILON || !segmentInEffectiveRegion(start, end, prepared)) {
+            candidate.valid = false;
+            return;
+        }
+        const bool spray = candidate.route[index - 1].type == RoutePointType::SprayStart &&
+                           candidate.route[index].type == RoutePointType::SprayEnd;
+        const double heading = segmentHeading(start, end);
+        if (previousHeading) {
+            candidate.estimatedTime += turnTime(*previousHeading, heading, model, candidate.turnCount);
+        }
+        candidate.estimatedTime +=
+            segmentTravelTime(segmentLength, spray ? model.spraySpeed : model.transitSpeed, model.acceleration);
+        candidate.distance += segmentLength;
+        if (spray) {
+            candidate.sprayDistance += segmentLength;
+        } else {
+            candidate.transitDistance += segmentLength;
+        }
+        previousHeading = heading;
+    }
+    double expectedSprayDistance = 0.0;
+    for (const SprayLeg& leg : candidate.legs) {
+        expectedSprayDistance += distance(leg.start, leg.end);
+    }
+    const double tolerance = coordinateTolerance(std::max(1.0, expectedSprayDistance));
+    candidate.valid = std::abs(candidate.sprayDistance - expectedSprayDistance) <= tolerance;
+}
+
+[[nodiscard]] std::optional<std::vector<Point>> connectorPath(const Point& start, const Point& end,
+                                                               const PreparedInput& prepared, const Roadmap& roadmap,
+                                                               const std::optional<Point>& initialDirection)
+{
+    if (samePoint(start, end)) {
+        return std::vector<Point>{start};
+    }
+    const TransitResult transit = findTransit(start, end, prepared, roadmap, initialDirection);
+    if (transit.status != TransitStatus::Found) {
+        return std::nullopt;
+    }
+    const auto simplified = simplifyTransitPoints(transit.points, start, end, prepared, initialDirection);
+    if (!simplified) {
+        return std::nullopt;
+    }
+    std::vector<Point> path;
+    path.reserve(simplified->size() + 2);
+    path.push_back(start);
+    path.insert(path.end(), simplified->begin(), simplified->end());
+    path.push_back(end);
+    return path;
+}
+
+[[nodiscard]] RouteCandidate buildRouteCandidate(std::vector<SprayLeg> legs, const std::optional<Point>& entryPoint,
+                                                  const PreparedInput& prepared, const Roadmap& roadmap,
+                                                  const PlannerCostModel& model)
+{
+    RouteCandidate candidate;
+    candidate.legs = std::move(legs);
+    if (candidate.legs.empty()) {
+        return candidate;
+    }
+
+    if (entryPoint) {
+        const auto entryPath = connectorPath(*entryPoint, candidate.legs.front().start, prepared, roadmap, std::nullopt);
+        if (!entryPath || !appendRoutePoint(candidate.route, *entryPoint, RoutePointType::Transit)) {
+            return candidate;
+        }
+        for (std::size_t index = 1; index + 1 < entryPath->size(); ++index) {
+            if (!appendRoutePoint(candidate.route, (*entryPath)[index], RoutePointType::Transit)) {
+                return candidate;
+            }
+        }
+    }
+
+    if (!appendRoutePoint(candidate.route, candidate.legs.front().start, RoutePointType::SprayStart) ||
+        !appendRoutePoint(candidate.route, candidate.legs.front().end, RoutePointType::SprayEnd)) {
+        return candidate;
+    }
+    for (std::size_t index = 1; index < candidate.legs.size(); ++index) {
+        const Point previousDirection = candidate.legs[index - 1].end - candidate.legs[index - 1].start;
+        const auto path = connectorPath(candidate.legs[index - 1].end, candidate.legs[index].start, prepared, roadmap,
+                                        previousDirection);
+        if (!path) {
+            return candidate;
+        }
+        for (std::size_t pathIndex = 1; pathIndex + 1 < path->size(); ++pathIndex) {
+            if (!appendRoutePoint(candidate.route, (*path)[pathIndex], RoutePointType::Transit)) {
+                return candidate;
+            }
+        }
+        if (!appendRoutePoint(candidate.route, candidate.legs[index].start, RoutePointType::SprayStart) ||
+            !appendRoutePoint(candidate.route, candidate.legs[index].end, RoutePointType::SprayEnd)) {
+            return candidate;
+        }
+        if (candidate.route.size() > prepared.limits.maxRoutePoints) {
+            return candidate;
+        }
+    }
+    calculateRouteMetrics(candidate, prepared, model);
+    return candidate;
+}
+
+[[nodiscard]] std::vector<SprayLeg> orderedLegs(const std::vector<ScanRow>& rows, const PreparedInput& prepared,
+                                                bool reverseRows, bool startFromMaximumAlong)
+{
+    std::vector<SprayLeg> legs;
+    for (std::size_t orderedRow = 0; orderedRow < rows.size(); ++orderedRow) {
+        const std::size_t rowIndex = reverseRows ? rows.size() - 1 - orderedRow : orderedRow;
+        const ScanRow& row = rows[rowIndex];
+        const bool reverseLegs = startFromMaximumAlong != (orderedRow % 2 != 0);
+        for (std::size_t orderedInterval = 0; orderedInterval < row.intervals.size(); ++orderedInterval) {
+            const std::size_t intervalIndex =
+                reverseLegs ? row.intervals.size() - 1 - orderedInterval : orderedInterval;
+            const Interval& interval = row.intervals[intervalIndex];
+            const double endpointInset = std::min(BOUNDARY_INSET, (interval.end - interval.start) * 0.25);
+            SprayLeg leg{prepared.frame.point(interval.start + endpointInset, row.across),
+                         prepared.frame.point(interval.end - endpointInset, row.across)};
+            if (reverseLegs) {
+                std::swap(leg.start, leg.end);
+            }
+            if (distance(leg.start, leg.end) > DISTANCE_EPSILON) {
+                legs.push_back(leg);
+            }
+        }
+    }
+    return legs;
+}
+
+[[nodiscard]] std::vector<IndexedLeg> indexedLegs(const std::vector<ScanRow>& rows, const PreparedInput& prepared)
+{
+    std::vector<IndexedLeg> result;
+    for (std::size_t rowIndex = 0; rowIndex < rows.size(); ++rowIndex) {
+        const ScanRow& row = rows[rowIndex];
+        for (const Interval& interval : row.intervals) {
+            const double endpointInset = std::min(BOUNDARY_INSET, (interval.end - interval.start) * 0.25);
+            if (interval.end - interval.start <= endpointInset * 2.0) {
+                continue;
+            }
+            result.push_back({{prepared.frame.point(interval.start + endpointInset, row.across),
+                               prepared.frame.point(interval.end - endpointInset, row.across)},
+                              rowIndex, interval.start + endpointInset, interval.end - endpointInset});
+        }
+    }
+    return result;
+}
+
+class DisjointSet
+{
+public:
+    explicit DisjointSet(std::size_t size) : _parent(size) { std::iota(_parent.begin(), _parent.end(), 0); }
+
+    [[nodiscard]] std::size_t find(std::size_t item)
+    {
+        if (_parent[item] != item) {
+            _parent[item] = find(_parent[item]);
+        }
+        return _parent[item];
+    }
+
+    void join(std::size_t first, std::size_t second)
+    {
+        first = find(first);
+        second = find(second);
+        if (first != second) {
+            _parent[second] = first;
+        }
+    }
+
+private:
+    std::vector<std::size_t> _parent;
+};
+
+[[nodiscard]] std::optional<std::vector<std::vector<IndexedLeg>>> buildCoverageCells(
+    const std::vector<ScanRow>& rows, const PreparedInput& prepared)
+{
+    std::vector<IndexedLeg> legs = indexedLegs(rows, prepared);
+    if (legs.empty()) {
+        return std::vector<std::vector<IndexedLeg>>{};
+    }
+    std::vector<std::vector<std::size_t>> nodesByRow(rows.size());
+    for (std::size_t index = 0; index < legs.size(); ++index) {
+        nodesByRow[legs[index].rowIndex].push_back(index);
+    }
+    std::vector<std::pair<std::size_t, std::size_t>> edges;
+    std::vector<std::size_t> outgoing(legs.size(), 0);
+    std::vector<std::size_t> incoming(legs.size(), 0);
+    for (std::size_t rowIndex = 1; rowIndex < rows.size(); ++rowIndex) {
+        for (const std::size_t previous : nodesByRow[rowIndex - 1]) {
+            for (const std::size_t current : nodesByRow[rowIndex]) {
+                const double overlap = std::min(legs[previous].maximumAlong, legs[current].maximumAlong) -
+                                       std::max(legs[previous].minimumAlong, legs[current].minimumAlong);
+                if (overlap > coordinateTolerance(std::max({1.0, std::abs(legs[previous].maximumAlong),
+                                                            std::abs(legs[current].maximumAlong)}))) {
+                    edges.emplace_back(previous, current);
+                    ++outgoing[previous];
+                    ++incoming[current];
+                }
+            }
+        }
+    }
+    DisjointSet sets(legs.size());
+    for (const auto& [previous, current] : edges) {
+        if (outgoing[previous] == 1 && incoming[current] == 1) {
+            sets.join(previous, current);
+        }
+    }
+    std::map<std::size_t, std::vector<IndexedLeg>> grouped;
+    for (std::size_t index = 0; index < legs.size(); ++index) {
+        grouped[sets.find(index)].push_back(legs[index]);
+    }
+    if (grouped.size() > prepared.limits.maxCoverageCells) {
+        return std::nullopt;
+    }
+    std::vector<std::vector<IndexedLeg>> cells;
+    cells.reserve(grouped.size());
+    for (auto& [root, cellLegs] : grouped) {
+        static_cast<void>(root);
+        std::sort(cellLegs.begin(), cellLegs.end(), [](const IndexedLeg& left, const IndexedLeg& right) {
+            return std::tie(left.rowIndex, left.minimumAlong) < std::tie(right.rowIndex, right.minimumAlong);
+        });
+        cells.push_back(std::move(cellLegs));
+    }
+    std::sort(cells.begin(), cells.end(), [](const auto& left, const auto& right) {
+        return std::tie(left.front().rowIndex, left.front().minimumAlong) <
+               std::tie(right.front().rowIndex, right.front().minimumAlong);
+    });
+    return cells;
+}
+
+[[nodiscard]] std::vector<SprayLeg> orderedCellLegs(const std::vector<IndexedLeg>& cell, bool reverseRows,
+                                                    bool startFromMaximumAlong)
+{
+    std::map<std::size_t, std::vector<IndexedLeg>> rows;
+    for (const IndexedLeg& leg : cell) {
+        rows[leg.rowIndex].push_back(leg);
+    }
+    std::vector<std::size_t> rowIndices;
+    rowIndices.reserve(rows.size());
+    for (const auto& [rowIndex, rowLegs] : rows) {
+        static_cast<void>(rowLegs);
+        rowIndices.push_back(rowIndex);
+    }
+    if (reverseRows) {
+        std::reverse(rowIndices.begin(), rowIndices.end());
+    }
+    std::vector<SprayLeg> result;
+    for (std::size_t rowPosition = 0; rowPosition < rowIndices.size(); ++rowPosition) {
+        auto rowLegs = rows[rowIndices[rowPosition]];
+        const bool reverse = startFromMaximumAlong != (rowPosition % 2 != 0);
+        std::sort(rowLegs.begin(), rowLegs.end(), [reverse](const IndexedLeg& left, const IndexedLeg& right) {
+            return reverse ? left.minimumAlong > right.minimumAlong : left.minimumAlong < right.minimumAlong;
+        });
+        for (const IndexedLeg& indexed : rowLegs) {
+            SprayLeg leg = indexed.leg;
+            if (reverse) {
+                std::swap(leg.start, leg.end);
+            }
+            result.push_back(leg);
+        }
+    }
+    return result;
+}
+
+struct CellVariant
+{
+    std::size_t id = 0;
+    std::size_t cell = 0;
+    RouteCandidate candidate;
+};
+
+[[nodiscard]] std::vector<CellVariant> buildCellVariants(const std::vector<std::vector<IndexedLeg>>& cells,
+                                                         const PreparedInput& prepared, const Roadmap& roadmap,
+                                                         const PlannerCostModel& model)
+{
+    std::vector<CellVariant> variants;
+    for (std::size_t cellIndex = 0; cellIndex < cells.size(); ++cellIndex) {
+        for (const bool reverseRows : {false, true}) {
+            for (const bool startFromMaximumAlong : {false, true}) {
+                RouteCandidate candidate = buildRouteCandidate(
+                    orderedCellLegs(cells[cellIndex], reverseRows, startFromMaximumAlong), std::nullopt, prepared,
+                    roadmap, model);
+                if (candidate.valid) {
+                    variants.push_back({variants.size(), cellIndex, std::move(candidate)});
+                }
+            }
+        }
+    }
+    return variants;
+}
+
+struct Transition
+{
+    bool valid = false;
+    std::vector<Point> path;
+    double cost = std::numeric_limits<double>::infinity();
+};
+
+class OptimizationModel
+{
+public:
+    OptimizationModel(const std::vector<CellVariant>& variants, const PreparedInput& prepared, const Roadmap& roadmap,
+                      const PlannerInput& input)
+        : _variants(variants), _prepared(prepared), _roadmap(roadmap), _input(input)
+    {
+        for (std::size_t index = 0; index < variants.size(); ++index) {
+            _variantsByCell[variants[index].cell].push_back(index);
+        }
+        double nearestDistance = std::numeric_limits<double>::infinity();
+        for (const CellVariant& variant : variants) {
+            const SprayLeg& first = variant.candidate.legs.front();
+            if (dot(first.end - first.start, *_input.sweepDirection) <= DISTANCE_EPSILON) {
+                continue;
+            }
+            nearestDistance = std::min(nearestDistance,
+                                       pointToSegmentDistance(*input.entryPoint, first.start, first.end));
+        }
+        for (std::size_t index = 0; index < variants.size(); ++index) {
+            const SprayLeg& first = variants[index].candidate.legs.front();
+            if (dot(first.end - first.start, *_input.sweepDirection) > DISTANCE_EPSILON &&
+                pointToSegmentDistance(*input.entryPoint, first.start, first.end) <=
+                nearestDistance + coordinateTolerance(std::max(1.0, nearestDistance))) {
+                _allowedStarts.push_back(index);
+            }
+        }
+    }
+
+    [[nodiscard]] const std::map<std::size_t, std::vector<std::size_t>>& variantsByCell() const
+    {
+        return _variantsByCell;
+    }
+
+    [[nodiscard]] bool allowedStart(std::size_t variant) const
+    {
+        return std::find(_allowedStarts.begin(), _allowedStarts.end(), variant) != _allowedStarts.end();
+    }
+
+    [[nodiscard]] double intrinsicTime(std::size_t variant) const
+    {
+        return _variants[variant].candidate.estimatedTime;
+    }
+
+    [[nodiscard]] const Transition& entry(std::size_t variant)
+    {
+        const auto existing = _entryCache.find(variant);
+        if (existing != _entryCache.end()) {
+            return existing->second;
+        }
+        Transition result;
+        if (allowedStart(variant)) {
+            const CellVariant& next = _variants[variant];
+            const auto path = connectorPath(*_input.entryPoint, next.candidate.legs.front().start, _prepared, _roadmap,
+                                            std::nullopt);
+            if (path) {
+                result.valid = true;
+                result.path = *path;
+                result.cost = connectorCost(result.path, std::nullopt,
+                                            segmentHeading(next.candidate.legs.front().start,
+                                                           next.candidate.legs.front().end));
+            }
+        }
+        return _entryCache.emplace(variant, std::move(result)).first->second;
+    }
+
+    [[nodiscard]] const Transition& transition(std::size_t first, std::size_t second)
+    {
+        const auto key = std::make_pair(first, second);
+        const auto existing = _transitionCache.find(key);
+        if (existing != _transitionCache.end()) {
+            return existing->second;
+        }
+        const CellVariant& previous = _variants[first];
+        const CellVariant& next = _variants[second];
+        const SprayLeg& previousLeg = previous.candidate.legs.back();
+        const SprayLeg& nextLeg = next.candidate.legs.front();
+        Transition result;
+        const auto path = connectorPath(previousLeg.end, nextLeg.start, _prepared, _roadmap,
+                                        previousLeg.end - previousLeg.start);
+        if (path) {
+            result.valid = true;
+            result.path = *path;
+            result.cost = connectorCost(result.path, segmentHeading(previousLeg.start, previousLeg.end),
+                                        segmentHeading(nextLeg.start, nextLeg.end));
+        }
+        return _transitionCache.emplace(key, std::move(result)).first->second;
+    }
+
+    [[nodiscard]] double sequenceCost(const std::vector<std::size_t>& sequence)
+    {
+        if (sequence.empty()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        const Transition& start = entry(sequence.front());
+        if (!start.valid) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double cost = start.cost + _variants[sequence.front()].candidate.estimatedTime;
+        for (std::size_t index = 1; index < sequence.size(); ++index) {
+            const Transition& connector = transition(sequence[index - 1], sequence[index]);
+            if (!connector.valid) {
+                return std::numeric_limits<double>::infinity();
+            }
+            cost += connector.cost + _variants[sequence[index]].candidate.estimatedTime;
+        }
+        return cost;
+    }
+
+    [[nodiscard]] RouteCandidate materialize(const std::vector<std::size_t>& sequence)
+    {
+        RouteCandidate result;
+        if (sequence.empty()) {
+            return result;
+        }
+        const Transition& start = entry(sequence.front());
+        if (!start.valid || !appendRoutePoint(result.route, *_input.entryPoint, RoutePointType::Transit)) {
+            return result;
+        }
+        for (std::size_t index = 1; index + 1 < start.path.size(); ++index) {
+            if (!appendRoutePoint(result.route, start.path[index], RoutePointType::Transit)) {
+                return {};
+            }
+        }
+        const auto appendVariant = [&result](const CellVariant& variant) {
+            result.legs.insert(result.legs.end(), variant.candidate.legs.begin(), variant.candidate.legs.end());
+            for (const RoutePoint& point : variant.candidate.route) {
+                if (!appendRoutePoint(result.route, point.position, point.type)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (!appendVariant(_variants[sequence.front()])) {
+            return {};
+        }
+        for (std::size_t index = 1; index < sequence.size(); ++index) {
+            const Transition& connector = transition(sequence[index - 1], sequence[index]);
+            if (!connector.valid) {
+                return {};
+            }
+            for (std::size_t pathIndex = 1; pathIndex + 1 < connector.path.size(); ++pathIndex) {
+                if (!appendRoutePoint(result.route, connector.path[pathIndex], RoutePointType::Transit)) {
+                    return {};
+                }
+            }
+            if (!appendVariant(_variants[sequence[index]])) {
+                return {};
+            }
+            if (result.route.size() > _prepared.limits.maxRoutePoints) {
+                return {};
+            }
+        }
+        calculateRouteMetrics(result, _prepared, _input.costModel);
+        return result;
+    }
+
+private:
+    [[nodiscard]] double connectorCost(const std::vector<Point>& path, const std::optional<double>& previousHeading,
+                                       double nextHeading) const
+    {
+        double cost = 0.0;
+        std::size_t ignoredTurns = 0;
+        std::optional<double> heading = previousHeading;
+        for (std::size_t index = 1; index < path.size(); ++index) {
+            const double segmentLength = distance(path[index - 1], path[index]);
+            if (segmentLength <= DISTANCE_EPSILON) {
+                continue;
+            }
+            const double currentHeading = segmentHeading(path[index - 1], path[index]);
+            if (heading) {
+                cost += turnTime(*heading, currentHeading, _input.costModel, ignoredTurns);
+            }
+            cost += segmentTravelTime(segmentLength, _input.costModel.transitSpeed, _input.costModel.acceleration);
+            heading = currentHeading;
+        }
+        if (heading) {
+            cost += turnTime(*heading, nextHeading, _input.costModel, ignoredTurns);
+        }
+        return cost;
+    }
+
+    const std::vector<CellVariant>& _variants;
+    const PreparedInput& _prepared;
+    const Roadmap& _roadmap;
+    const PlannerInput& _input;
+    std::map<std::size_t, std::vector<std::size_t>> _variantsByCell;
+    std::vector<std::size_t> _allowedStarts;
+    std::map<std::size_t, Transition> _entryCache;
+    std::map<std::pair<std::size_t, std::size_t>, Transition> _transitionCache;
+};
+
+[[nodiscard]] std::pair<double, std::vector<std::size_t>> bestVariantsForCellOrder(
+    OptimizationModel& model, const std::vector<std::size_t>& cellOrder)
+{
+    if (cellOrder.empty()) {
+        return {std::numeric_limits<double>::infinity(), {}};
+    }
+    std::map<std::size_t, std::pair<double, std::vector<std::size_t>>> states;
+    for (const std::size_t variant : model.variantsByCell().at(cellOrder.front())) {
+        const Transition& entry = model.entry(variant);
+        if (entry.valid) {
+            states[variant] = {model.sequenceCost({variant}), {variant}};
+        }
+    }
+    for (std::size_t position = 1; position < cellOrder.size() && !states.empty(); ++position) {
+        std::map<std::size_t, std::pair<double, std::vector<std::size_t>>> nextStates;
+        for (const std::size_t nextVariant : model.variantsByCell().at(cellOrder[position])) {
+            for (const auto& [previousVariant, previousState] : states) {
+                const Transition& connector = model.transition(previousVariant, nextVariant);
+                if (!connector.valid) {
+                    continue;
+                }
+                std::vector<std::size_t> path = previousState.second;
+                path.push_back(nextVariant);
+                const double cost = model.sequenceCost(path);
+                const auto existing = nextStates.find(nextVariant);
+                if (existing == nextStates.end() || cost + DISTANCE_EPSILON < existing->second.first ||
+                    (std::abs(cost - existing->second.first) <= DISTANCE_EPSILON && path < existing->second.second)) {
+                    nextStates[nextVariant] = {cost, std::move(path)};
+                }
+            }
+        }
+        states = std::move(nextStates);
+    }
+    if (states.empty()) {
+        return {std::numeric_limits<double>::infinity(), {}};
+    }
+    return std::min_element(states.begin(), states.end(), [](const auto& left, const auto& right) {
+               return std::tie(left.second.first, left.second.second) < std::tie(right.second.first, right.second.second);
+           })->second;
+}
+
+[[nodiscard]] std::vector<std::size_t> solveExact(OptimizationModel& model, std::size_t cellCount)
+{
+    const std::size_t variantCount = [&model]() {
+        std::size_t count = 0;
+        for (const auto& [cell, variants] : model.variantsByCell()) {
+            static_cast<void>(cell);
+            count += variants.size();
+        }
+        return count;
+    }();
+    const std::size_t fullMask = (std::size_t{1} << cellCount) - 1;
+    const double infinity = std::numeric_limits<double>::infinity();
+    std::vector<double> costs((fullMask + 1) * variantCount, infinity);
+    std::vector<int> parents(costs.size(), -1);
+    const auto stateIndex = [variantCount](std::size_t mask, std::size_t variant) {
+        return mask * variantCount + variant;
+    };
+    for (const auto& [cell, variants] : model.variantsByCell()) {
+        const std::size_t mask = std::size_t{1} << cell;
+        for (const std::size_t variant : variants) {
+            if (model.allowedStart(variant)) {
+                costs[stateIndex(mask, variant)] = model.sequenceCost({variant});
+            }
+        }
+    }
+    for (std::size_t mask = 1; mask <= fullMask; ++mask) {
+        for (const auto& [lastCell, lastVariants] : model.variantsByCell()) {
+            if ((mask & (std::size_t{1} << lastCell)) == 0) {
+                continue;
+            }
+            for (const std::size_t last : lastVariants) {
+                const double currentCost = costs[stateIndex(mask, last)];
+                if (!std::isfinite(currentCost)) {
+                    continue;
+                }
+                for (const auto& [nextCell, nextVariants] : model.variantsByCell()) {
+                    const std::size_t nextBit = std::size_t{1} << nextCell;
+                    if (mask & nextBit) {
+                        continue;
+                    }
+                    for (const std::size_t next : nextVariants) {
+                        const Transition& connector = model.transition(last, next);
+                        if (!connector.valid) {
+                            continue;
+                        }
+                        const std::size_t nextMask = mask | nextBit;
+                        const std::size_t nextState = stateIndex(nextMask, next);
+                        const double candidate = currentCost + connector.cost + model.intrinsicTime(next);
+                        if (candidate + DISTANCE_EPSILON < costs[nextState]) {
+                            costs[nextState] = candidate;
+                            parents[nextState] = static_cast<int>(last);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::size_t last = variantCount;
+    double best = infinity;
+    for (const auto& [cell, variants] : model.variantsByCell()) {
+        static_cast<void>(cell);
+        for (const std::size_t variant : variants) {
+            const double cost = costs[stateIndex(fullMask, variant)];
+            if (cost + DISTANCE_EPSILON < best ||
+                (std::abs(cost - best) <= DISTANCE_EPSILON && variant < last)) {
+                best = cost;
+                last = variant;
+            }
+        }
+    }
+    if (last == variantCount) {
+        return {};
+    }
+    std::vector<std::size_t> reversed;
+    std::size_t mask = fullMask;
+    while (last < variantCount) {
+        reversed.push_back(last);
+        std::size_t cell = 0;
+        for (const auto& [candidateCell, variants] : model.variantsByCell()) {
+            if (std::find(variants.begin(), variants.end(), last) != variants.end()) {
+                cell = candidateCell;
+                break;
+            }
+        }
+        const int previous = parents[stateIndex(mask, last)];
+        mask &= ~(std::size_t{1} << cell);
+        if (previous < 0) {
+            break;
+        }
+        last = static_cast<std::size_t>(previous);
+    }
+    std::reverse(reversed.begin(), reversed.end());
+    return reversed;
+}
+
+[[nodiscard]] std::vector<std::size_t> solveHeuristic(OptimizationModel& model)
+{
+    std::size_t firstVariant = std::numeric_limits<std::size_t>::max();
+    double firstCost = std::numeric_limits<double>::infinity();
+    for (const auto& [cell, variants] : model.variantsByCell()) {
+        static_cast<void>(cell);
+        for (const std::size_t variant : variants) {
+            const double cost = model.sequenceCost({variant});
+            if (cost + DISTANCE_EPSILON < firstCost ||
+                (std::abs(cost - firstCost) <= DISTANCE_EPSILON && variant < firstVariant)) {
+                firstCost = cost;
+                firstVariant = variant;
+            }
+        }
+    }
+    if (firstVariant == std::numeric_limits<std::size_t>::max()) {
+        return {};
+    }
+    std::size_t firstCell = 0;
+    for (const auto& [cell, variants] : model.variantsByCell()) {
+        if (std::find(variants.begin(), variants.end(), firstVariant) != variants.end()) {
+            firstCell = cell;
+            break;
+        }
+    }
+    std::vector<std::size_t> cellOrder{firstCell};
+    std::vector<std::size_t> remaining;
+    for (const auto& [cell, variants] : model.variantsByCell()) {
+        static_cast<void>(variants);
+        if (cell != firstCell) {
+            remaining.push_back(cell);
+        }
+    }
+    while (!remaining.empty()) {
+        double bestCost = std::numeric_limits<double>::infinity();
+        std::vector<std::size_t> bestOrder;
+        std::size_t insertedCell = remaining.front();
+        const std::size_t candidateCount = remaining.size() > 20 ? std::min<std::size_t>(12, remaining.size()) : remaining.size();
+        for (std::size_t remainingIndex = 0; remainingIndex < candidateCount; ++remainingIndex) {
+            const std::size_t cell = remaining[remainingIndex];
+            for (std::size_t position = 0; position <= cellOrder.size(); ++position) {
+                std::vector<std::size_t> candidate = cellOrder;
+                candidate.insert(candidate.begin() + static_cast<std::ptrdiff_t>(position), cell);
+                const auto [cost, sequence] = bestVariantsForCellOrder(model, candidate);
+                static_cast<void>(sequence);
+                if (cost + DISTANCE_EPSILON < bestCost ||
+                    (std::abs(cost - bestCost) <= DISTANCE_EPSILON && candidate < bestOrder)) {
+                    bestCost = cost;
+                    bestOrder = std::move(candidate);
+                    insertedCell = cell;
+                }
+            }
+        }
+        if (!std::isfinite(bestCost)) {
+            return {};
+        }
+        cellOrder = std::move(bestOrder);
+        remaining.erase(std::find(remaining.begin(), remaining.end(), insertedCell));
+    }
+    for (std::size_t pass = 0; pass < 6; ++pass) {
+        const auto [incumbentCost, incumbentSequence] = bestVariantsForCellOrder(model, cellOrder);
+        static_cast<void>(incumbentSequence);
+        double bestCost = incumbentCost;
+        std::vector<std::size_t> bestOrder = cellOrder;
+        for (std::size_t first = 0; first + 1 < cellOrder.size(); ++first) {
+            for (std::size_t last = first + 1; last < std::min(cellOrder.size(), first + 9); ++last) {
+                std::vector<std::size_t> candidate = cellOrder;
+                std::reverse(candidate.begin() + static_cast<std::ptrdiff_t>(first),
+                             candidate.begin() + static_cast<std::ptrdiff_t>(last + 1));
+                const auto [cost, sequence] = bestVariantsForCellOrder(model, candidate);
+                static_cast<void>(sequence);
+                if (cost + DISTANCE_EPSILON < bestCost) {
+                    bestCost = cost;
+                    bestOrder = std::move(candidate);
+                }
+            }
+        }
+        for (std::size_t from = 0; from < cellOrder.size(); ++from) {
+            for (std::size_t to = 0; to < cellOrder.size(); ++to) {
+                if (from == to) {
+                    continue;
+                }
+                std::vector<std::size_t> candidate = cellOrder;
+                const std::size_t cell = candidate[from];
+                candidate.erase(candidate.begin() + static_cast<std::ptrdiff_t>(from));
+                candidate.insert(candidate.begin() + static_cast<std::ptrdiff_t>(to), cell);
+                const auto [cost, sequence] = bestVariantsForCellOrder(model, candidate);
+                static_cast<void>(sequence);
+                if (cost + DISTANCE_EPSILON < bestCost) {
+                    bestCost = cost;
+                    bestOrder = std::move(candidate);
+                }
+            }
+        }
+        if (bestOrder == cellOrder) {
+            break;
+        }
+        cellOrder = std::move(bestOrder);
+    }
+    return bestVariantsForCellOrder(model, cellOrder).second;
+}
+
+[[nodiscard]] PlannerResult successfulResult(RouteCandidate candidate, PlannerMethod method, std::size_t activeCells,
+                                              bool fallback)
+{
+    return {PlannerStatus::Success,
+            {},
+            std::move(candidate.legs),
+            std::move(candidate.route),
+            candidate.distance,
+            candidate.sprayDistance,
+            candidate.transitDistance,
+            candidate.estimatedTime,
+            candidate.turnCount,
+            activeCells,
+            method,
+            fallback};
+}
+
 [[nodiscard]] PlannerResult failure(PlannerStatus status, std::string error)
 {
     return {status, std::move(error), {}, {}, 0.0};
@@ -1169,7 +2032,7 @@ struct CoverageResult
 
 }  // namespace
 
-PlannerResult plan(const PlannerInput& input)
+PlannerResult legacyPlan(const PlannerInput& input)
 {
     PreparedInput prepared;
     std::string error;
@@ -1283,6 +2146,132 @@ PlannerResult plan(const PlannerInput& input)
         totalDistance += distance(route[index - 1].position, route[index].position);
     }
     return {PlannerStatus::Success, {}, std::move(legs), std::move(route), totalDistance};
+}
+
+PlannerResult plan(const PlannerInput& input)
+{
+    if (!input.entryPoint || !input.sweepDirection) {
+        return legacyPlan(input);
+    }
+
+    PreparedInput prepared;
+    std::string error;
+    if (!prepareShapes(input, prepared, error)) {
+        return failure(PlannerStatus::InvalidInput, std::move(error));
+    }
+    ScanRowsResult rows = buildScanRows(prepared, input.spacing);
+    if (rows.status == ScanRowsStatus::ComplexityLimit) {
+        return failure(PlannerStatus::ComplexityLimit, "scanline count exceeds its limit");
+    }
+    if (rows.status != ScanRowsStatus::Found) {
+        return failure(PlannerStatus::InvalidInput, "scanline generation encountered numerically invalid geometry");
+    }
+
+    const std::vector<IndexedLeg> canonical = indexedLegs(rows.rows, prepared);
+    if (canonical.empty()) {
+        return failure(PlannerStatus::EmptyRegion, "the effective region contains no sprayable scanline");
+    }
+    if (canonical.size() > prepared.limits.maxSprayLegs) {
+        return failure(PlannerStatus::ComplexityLimit, "spray leg count exceeds its limit");
+    }
+    std::vector<SprayLeg> canonicalLegs;
+    canonicalLegs.reserve(canonical.size());
+    for (const IndexedLeg& leg : canonical) {
+        canonicalLegs.push_back(leg.leg);
+    }
+
+    const std::optional<Roadmap> roadmap = buildRoadmap(prepared);
+    if (!roadmap) {
+        return failure(PlannerStatus::ComplexityLimit, "visibility graph exceeds its node limit");
+    }
+    const CoverageResult coverage = coverageIsConnected(prepared, *roadmap, canonicalLegs);
+    if (coverage.status == CoverageStatus::ComplexityLimit) {
+        return failure(PlannerStatus::ComplexityLimit, "topology representatives exceed their limit");
+    }
+    if (coverage.status == CoverageStatus::InvalidGeometry) {
+        return failure(PlannerStatus::InvalidInput, "connectivity analysis encountered numerically invalid geometry");
+    }
+    if (coverage.status == CoverageStatus::Empty) {
+        return failure(PlannerStatus::EmptyRegion, "the effective region has no connected interior");
+    }
+    if (coverage.status != CoverageStatus::Connected) {
+        return failure(PlannerStatus::DisconnectedRegion, "the effective region is disconnected or cannot be routed");
+    }
+
+    RouteCandidate legacy;
+    double bestLineDistance = std::numeric_limits<double>::infinity();
+    double bestStartDistance = std::numeric_limits<double>::infinity();
+    std::size_t orderingIndex = 0;
+    std::size_t bestOrderingIndex = std::numeric_limits<std::size_t>::max();
+    for (const bool reverseRows : {false, true}) {
+        for (const bool startFromMaximumAlong : {false, true}) {
+            std::vector<SprayLeg> candidateLegs =
+                orderedLegs(rows.rows, prepared, reverseRows, startFromMaximumAlong);
+            if (candidateLegs.empty()) {
+                ++orderingIndex;
+                continue;
+            }
+            if (dot(candidateLegs.front().end - candidateLegs.front().start, *input.sweepDirection) <=
+                DISTANCE_EPSILON) {
+                ++orderingIndex;
+                continue;
+            }
+            const double lineDistance =
+                pointToSegmentDistance(*input.entryPoint, candidateLegs.front().start, candidateLegs.front().end);
+            const double startDistance = distance(*input.entryPoint, candidateLegs.front().start);
+            RouteCandidate candidate =
+                buildRouteCandidate(std::move(candidateLegs), input.entryPoint, prepared, *roadmap, input.costModel);
+            if (candidate.valid &&
+                (lineDistance + DISTANCE_EPSILON < bestLineDistance ||
+                 (std::abs(lineDistance - bestLineDistance) <= DISTANCE_EPSILON &&
+                  (startDistance + DISTANCE_EPSILON < bestStartDistance ||
+                   (std::abs(startDistance - bestStartDistance) <= DISTANCE_EPSILON &&
+                    orderingIndex < bestOrderingIndex))))) {
+                bestLineDistance = lineDistance;
+                bestStartDistance = startDistance;
+                bestOrderingIndex = orderingIndex;
+                legacy = std::move(candidate);
+            }
+            ++orderingIndex;
+        }
+    }
+    if (!legacy.valid) {
+        return failure(PlannerStatus::NoRoute, "the legacy spray route cannot remain inside the effective region");
+    }
+
+    const auto cells = buildCoverageCells(rows.rows, prepared);
+    if (!cells || cells->empty()) {
+        return successfulResult(std::move(legacy), PlannerMethod::LegacyFallback, 0, true);
+    }
+    std::vector<CellVariant> variants = buildCellVariants(*cells, prepared, *roadmap, input.costModel);
+    std::size_t variantCellCount = 0;
+    std::optional<std::size_t> previousCell;
+    for (const CellVariant& variant : variants) {
+        if (!previousCell || *previousCell != variant.cell) {
+            ++variantCellCount;
+            previousCell = variant.cell;
+        }
+    }
+    if (variantCellCount != cells->size()) {
+        return successfulResult(std::move(legacy), PlannerMethod::LegacyFallback, cells->size(), true);
+    }
+
+    OptimizationModel model(variants, prepared, *roadmap, input);
+    std::vector<std::size_t> sequence;
+    PlannerMethod method = PlannerMethod::HeuristicCellOptimization;
+    if (cells->size() <= input.limits.exactCellLimit) {
+        sequence = solveExact(model, cells->size());
+        method = PlannerMethod::ExactCellOptimization;
+    } else {
+        sequence = solveHeuristic(model);
+    }
+    RouteCandidate optimized = model.materialize(sequence);
+    const double sprayTolerance = coordinateTolerance(std::max(1.0, legacy.sprayDistance));
+    if (!optimized.valid || std::abs(optimized.sprayDistance - legacy.sprayDistance) > sprayTolerance ||
+        optimized.estimatedTime > legacy.estimatedTime + DISTANCE_EPSILON) {
+        return successfulResult(std::move(legacy), PlannerMethod::LegacyFallback, cells->size(), true);
+    }
+    return successfulResult(std::move(optimized), method, cells->size(), false);
 }
 
 }  // namespace AgriculturalSpray

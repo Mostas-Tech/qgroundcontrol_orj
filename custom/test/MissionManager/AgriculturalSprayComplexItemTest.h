@@ -13,7 +13,8 @@ class AgriculturalSprayComplexItemTest final : public OfflineMissionTest
 private slots:
     void init() final;
     void cleanup() final;
-
+    void directionVertexDefaultsToZero();
+    void rapidDirectionChangesPublishLatestRoute();
 
 private:
     void _factMetadataAndAreaStates();

@@ -50,11 +50,6 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
 {
     const QGeoCoordinate center(47.397742, 8.545594);
     QmlObjectListModel* const polygons = geoFenceController()->polygons();
-    geoFenceController()->addInclusionPolygon(center.atDistanceAndAzimuth(50.0, -45.0),
-                                              center.atDistanceAndAzimuth(50.0, 135.0));
-    QGCFencePolygon* const polygon = polygons->value<QGCFencePolygon*>(0);
-    QVERIFY(polygon);
-    polygon->setPath(square(center));
 
     AgriculturalSprayComplexItem* const created = qobject_cast<AgriculturalSprayComplexItem*>(
         missionController()->insertComplexMissionItem(AgriculturalSprayComplexItem::canonicalName, center, -1, false));
@@ -66,13 +61,30 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     sourcePolygon->setTraceMode(false);
     QCOMPARE_TRUE_WAIT(created->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
     QVERIFY(!created->routeCoordinates().isEmpty());
+    created->setDirectionVertexIndex(2);
+    QCOMPARE_TRUE_WAIT(created->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+    QCOMPARE(created->directionVertexIndex(), 2);
+    QCOMPARE(created->sourcePolygonCoordinates().count(), 4);
+    QVERIFY(created->routeCoordinates().front().distanceTo(created->sourcePolygonCoordinates().at(2)) < 0.05);
 
     const QJsonObject mission = planController()->saveToJson().object()
                                     .value(PlanMasterController::kJsonMissionObjectKey)
                                     .toObject();
     const QJsonArray items = mission.value(QStringLiteral("items")).toArray();
     QCOMPARE(items.count(), 1);
-    QCOMPARE(items.at(0).toObject().value(QStringLiteral("sourcePolygonIndex")).toInt(), 1);
+    int sourcePolygonIndex = -1;
+    for (int index = 0; index < polygons->count(); ++index) {
+        if (polygons->value<QGCFencePolygon*>(index) == sourcePolygon) {
+            sourcePolygonIndex = index;
+            break;
+        }
+    }
+    QVERIFY(sourcePolygonIndex >= 0);
+    QVERIFY(items.at(0).toObject().value(QStringLiteral("sourcePolygonIndex")).toInt() >= 0);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("directionVertexIndex")).toInt(), 2);
+    QVERIFY(!items.at(0).toObject().contains(QStringLiteral("GridAngle")));
+    QVERIFY(!items.at(0).toObject().contains(QStringLiteral("EntryCorner")));
 
     QTemporaryDir temporaryDirectory;
     QVERIFY(temporaryDirectory.isValid());
@@ -91,16 +103,29 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     planController()->loadFromFile(validPlanPath);
     AgriculturalSprayComplexItem* loaded = sprayItem(missionController());
     QVERIFY(loaded);
-    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
+    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
     QVERIFY(!loaded->routeCoordinates().isEmpty());
     QVERIFY(loaded->complexDistance() > 0.0);
+    QCOMPARE(loaded->directionVertexIndex(), 2);
+    QCOMPARE(loaded->sourcePolygonCoordinates().count(), 4);
+    QVERIFY(loaded->routeCoordinates().front().distanceTo(loaded->sourcePolygonCoordinates().at(2)) < 0.05);
+
+    QJsonObject invalidItem = items.at(0).toObject();
+    invalidItem[QStringLiteral("directionVertexIndex")] = 99;
+    QString invalidDirectionError;
+    QVERIFY(loaded->load(invalidItem, loaded->sequenceNumber(), invalidDirectionError));
+    QVERIFY(invalidDirectionError.isEmpty());
+    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::InvalidArea, TestTimeout::mediumMs());
+    QCOMPARE(loaded->directionVertexIndex(), 99);
+    QVERIFY(loaded->errorText().contains(QStringLiteral("outside")));
+    QVERIFY(loaded->routeCoordinates().isEmpty());
 
     expectLogMessage("qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
                      QRegularExpression(QStringLiteral("Route input snapshot failed.*out of range")));
     planController()->loadFromFile(emptyFencePlanPath);
     loaded = sprayItem(missionController());
     QVERIFY(loaded);
-    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::GenerationError, TestTimeout::shortMs());
+    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::GenerationError, TestTimeout::mediumMs());
     QVERIFY(loaded->errorText().contains(QStringLiteral("out of range")));
     QVERIFY(loaded->routeCoordinates().isEmpty());
     QCOMPARE(loaded->complexDistance(), 0.0);

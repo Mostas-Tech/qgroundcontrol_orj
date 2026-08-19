@@ -94,22 +94,12 @@ Rectangle {
                 fact:                   _root.missionItem.lineSpacing
             }
 
-            FactTextFieldSlider {
-                objectName:             "agriculturalSprayGridAngleControl"
-                Layout.fillWidth:       true
-                Layout.columnSpan:      2
-                label:                  qsTr("Grid angle")
-                fact:                   _root.missionItem.gridAngle
-                allowUsingMinMax:       true
-            }
-
-            QGCLabel { text: qsTr("Entry corner") }
-            FactComboBox {
-                objectName:             "agriculturalSprayEntryCornerCombo"
-                Layout.fillWidth:       true
-                Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.entryCorner
-                indexModel:             false
+            QGCLabel {
+                objectName:         "agriculturalSprayDirectionGuidance"
+                Layout.fillWidth:   true
+                Layout.columnSpan:  2
+                text:               qsTr("Tap a starting corner on the map. The edge after that corner sets the flight direction.")
+                wrapMode:           Text.WordWrap
             }
 
             QGCLabel { text: qsTr("Droplet class") }
