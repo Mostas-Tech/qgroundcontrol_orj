@@ -186,6 +186,7 @@ Qt*-linux*.tar.*
 .pytest_cache/
 .import_linter_cache/
 .venv/
+.codex-work/
 
 # Vale prose linter (downloaded via `vale sync`)
 .github/styles/
