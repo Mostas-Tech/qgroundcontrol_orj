@@ -55,11 +55,7 @@ def _asset() -> tuple[str, str, str]:
     if machine.lower() in {"amd64", "x86_64"}:
         machine = "AMD64" if system == "Windows" else "x86_64"
     elif machine.lower() in {"aarch64", "arm64"}:
-        machine = (
-            "ARM64"
-            if system == "Windows"
-            else ("arm64" if system == "Darwin" else "aarch64")
-        )
+        machine = "ARM64" if system == "Windows" else ("arm64" if system == "Darwin" else "aarch64")
     try:
         return ASSETS[(system, machine)]
     except KeyError as exc:
