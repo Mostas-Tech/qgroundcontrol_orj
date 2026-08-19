@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING
 
 from shapely import affinity
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
-from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from .models import PlannerConfig, Point2D, RouteMetrics, RouteSegment
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
+    from shapely.geometry.base import BaseGeometry
 
 
 def distance(start: Point2D, end: Point2D) -> float:
@@ -59,7 +63,7 @@ def iter_polygons(geometry: BaseGeometry) -> Iterator[Polygon]:
         yield from geometry.geoms
         return
     if hasattr(geometry, "geoms"):
-        for child in geometry.geoms:
+        for child in getattr(geometry, "geoms", ()):
             yield from iter_polygons(child)
 
 
@@ -73,7 +77,7 @@ def iter_lines(geometry: BaseGeometry) -> Iterator[LineString]:
         yield from geometry.geoms
         return
     if hasattr(geometry, "geoms"):
-        for child in geometry.geoms:
+        for child in getattr(geometry, "geoms", ()):
             yield from iter_lines(child)
 
 
@@ -98,7 +102,9 @@ def segment_travel_time(length: float, speed: float, acceleration: float) -> flo
     return 2.0 * speed / acceleration + (length - acceleration_distance) / speed
 
 
-def turn_time(previous_heading: float, next_heading: float, config: PlannerConfig) -> tuple[float, int]:
+def turn_time(
+    previous_heading: float, next_heading: float, config: PlannerConfig
+) -> tuple[float, int]:
     delta_degrees = heading_delta_degrees(previous_heading, next_heading)
     if delta_degrees <= config.yaw_threshold_degrees:
         return 0.0, 0
@@ -149,10 +155,12 @@ def _coverage_ratio(
     free_space: BaseGeometry,
     swath_spacing: float,
 ) -> float:
-    spray_lines = [LineString([segment.start, segment.end]) for segment in segments if segment.spray]
+    spray_lines = [
+        LineString([segment.start, segment.end]) for segment in segments if segment.spray
+    ]
     if not spray_lines or free_space.area <= 0.0:
         return 0.0
-    footprints = [line.buffer(swath_spacing / 2.0, cap_style=2) for line in spray_lines]
+    footprints = [line.buffer(swath_spacing / 2.0, cap_style="flat") for line in spray_lines]
     covered_area = unary_union(footprints).intersection(free_space).area
     return min(1.0, max(0.0, covered_area / free_space.area))
 
@@ -165,7 +173,9 @@ def route_metrics(
     expected_spray_distance: float | None = None,
 ) -> RouteMetrics:
     total_distance = sum(distance(segment.start, segment.end) for segment in segments)
-    spray_distance = sum(distance(segment.start, segment.end) for segment in segments if segment.spray)
+    spray_distance = sum(
+        distance(segment.start, segment.end) for segment in segments if segment.spray
+    )
     transit_distance = total_distance - spray_distance
     estimated_time, turns = route_time(segments, config)
     connector_count, inter_cell_count = _count_connector_groups(segments)

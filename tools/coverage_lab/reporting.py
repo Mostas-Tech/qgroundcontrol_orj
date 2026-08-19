@@ -5,14 +5,16 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import asdict
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .geometry import iter_polygons
-from .planner import ScenarioResult
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from matplotlib.axes import Axes
+
+    from .planner import ScenarioResult
 
 
 def _route_record(result: ScenarioResult, route_name: str) -> dict[str, Any]:
@@ -24,7 +26,9 @@ def _route_record(result: ScenarioResult, route_name: str) -> dict[str, Any]:
         "angle_degrees": route.angle_degrees,
         "field_vertex_index": result.selection.vertex_index,
         "cell_count": len(result.decomposition.cells),
-        "active_cell_count": len(route.cell_order) if route.cell_order else int(bool(result.decomposition.legs)),
+        "active_cell_count": len(route.cell_order)
+        if route.cell_order
+        else int(bool(result.decomposition.legs)),
         "visibility_node_count": result.visibility_node_count,
         "used_fallback": route.used_fallback,
     }
@@ -109,7 +113,10 @@ def _draw_context(ax: Axes, result: ScenarioResult) -> None:
     _draw_polygon(ax, result.scenario.field, facecolor="#e9f4df", edgecolor="#324a2f", alpha=0.8)
     for obstacle in result.scenario.obstacles:
         _draw_polygon(ax, obstacle, facecolor="#d95f59", edgecolor="#7f1d1d", alpha=0.55)
-    vertices = tuple(result.scenario.field.exterior.coords)[:-1]
+    vertices = tuple(
+        (float(x_coordinate), float(y_coordinate))
+        for x_coordinate, y_coordinate in result.scenario.field.exterior.coords
+    )[:-1]
     ax.scatter(
         [point[0] for point in vertices],
         [point[1] for point in vertices],
@@ -208,7 +215,9 @@ def _write_plot(result: ScenarioResult, destination: Path) -> None:
             alpha=0.35,
         )
         representative = cell.geometry.representative_point()
-        cell_axis.text(representative.x, representative.y, str(cell.cell_id), fontsize=7, ha="center")
+        cell_axis.text(
+            representative.x, representative.y, str(cell.cell_id), fontsize=7, ha="center"
+        )
     cell_axis.set_title(
         f"BCD cells: {len(result.decomposition.cells)}, vertex {result.selection.vertex_index}, "
         f"angle {result.decomposition.angle_degrees:.1f} degrees"

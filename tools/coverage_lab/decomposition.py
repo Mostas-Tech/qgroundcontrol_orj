@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shapely.geometry import GeometryCollection, LineString, Point, box
-from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from .geometry import iter_lines, iter_polygons, rotate_geometry, rotate_point
 from .models import CoverageCell, PlannerConfig, SprayLeg
+
+if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
 
 
 @dataclass(frozen=True)
@@ -59,12 +63,14 @@ def _critical_y_coordinates(free_space: BaseGeometry, tolerance: float) -> list[
     return unique
 
 
-def _slab_layers(free_space: BaseGeometry, critical_y: list[float], tolerance: float) -> list[list[_SlabPiece]]:
+def _slab_layers(
+    free_space: BaseGeometry, critical_y: list[float], tolerance: float
+) -> list[list[_SlabPiece]]:
     minimum_x, _, maximum_x, _ = free_space.bounds
     horizontal_padding = max(1.0, maximum_x - minimum_x)
     layers: list[list[_SlabPiece]] = []
     next_node_id = 0
-    for minimum_y, maximum_y in zip(critical_y, critical_y[1:], strict=False):
+    for minimum_y, maximum_y in itertools.pairwise(critical_y):
         if maximum_y - minimum_y <= tolerance:
             continue
         slab = box(
@@ -97,11 +103,14 @@ def _component_chains(layers: list[list[_SlabPiece]], tolerance: float) -> list[
     outgoing_degree: dict[int, int] = {piece.node_id: 0 for piece in pieces}
     incoming_degree: dict[int, int] = {piece.node_id: 0 for piece in pieces}
 
-    for previous_layer, current_layer in zip(layers, layers[1:], strict=False):
+    for previous_layer, current_layer in itertools.pairwise(layers):
         for previous in previous_layer:
             for current in current_layer:
                 shared_boundary = previous.geometry.intersection(current.geometry)
-                if shared_boundary.length > tolerance or shared_boundary.area > tolerance * tolerance:
+                if (
+                    shared_boundary.length > tolerance
+                    or shared_boundary.area > tolerance * tolerance
+                ):
                     edges.append((previous, current))
                     outgoing_degree[previous.node_id] += 1
                     incoming_degree[current.node_id] += 1
@@ -124,7 +133,9 @@ def _cell_geometries(free_space: BaseGeometry, config: PlannerConfig) -> list[Ba
     chains = _component_chains(layers, config.geometry_tolerance)
     geometries = [unary_union([piece.geometry for piece in chain]) for chain in chains]
     geometries = [geometry for geometry in geometries if geometry.area > config.geometry_tolerance]
-    geometries.sort(key=lambda geometry: (geometry.bounds[1], geometry.bounds[0], geometry.bounds[3]))
+    geometries.sort(
+        key=lambda geometry: (geometry.bounds[1], geometry.bounds[0], geometry.bounds[3])
+    )
 
     covered = unary_union(geometries) if geometries else GeometryCollection()
     missing_area = free_space.difference(covered).area
@@ -210,7 +221,9 @@ def build_decomposition(
         )
         candidate_cells = [cell for cell in world_cells if cell.geometry.covers(midpoint)]
         if not candidate_cells:
-            candidate_cells = sorted(world_cells, key=lambda cell: cell.geometry.distance(midpoint))[:1]
+            candidate_cells = sorted(
+                world_cells, key=lambda cell: cell.geometry.distance(midpoint)
+            )[:1]
         if not candidate_cells:
             raise RuntimeError("No BCD cell accepts a generated spray leg")
         candidate_cells[0].legs.append(world_leg)

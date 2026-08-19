@@ -7,7 +7,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-
 _DEFAULT_SCENARIOS = (
     ("Empty rectangle - vertex 0", "empty_rectangle"),
     ("Large circle - vertex 0", "large_circle"),
@@ -30,8 +29,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def _image_items(default_dir: Path, alternate_polygon_dir: Path) -> tuple[tuple[str, Path], ...]:
     default_items = tuple(
-        (title, default_dir / scenario / "comparison.png")
-        for title, scenario in _DEFAULT_SCENARIOS
+        (title, default_dir / scenario / "comparison.png") for title, scenario in _DEFAULT_SCENARIOS
     )
     alternate_item = (
         "Large polygon - vertex 1",
@@ -56,12 +54,7 @@ def main() -> int:
     margin = 24
     gap = 24
     canvas_width = 2 * margin + columns * cell_width + (columns - 1) * gap
-    canvas_height = (
-        page_title_height
-        + 2 * margin
-        + rows * cell_height
-        + (rows - 1) * gap
-    )
+    canvas_height = page_title_height + 2 * margin + rows * cell_height + (rows - 1) * gap
     canvas = Image.new("RGB", (canvas_width, canvas_height), color=(226, 232, 240))
     draw = ImageDraw.Draw(canvas)
     page_font = ImageFont.load_default(size=42)

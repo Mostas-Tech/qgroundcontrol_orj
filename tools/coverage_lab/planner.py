@@ -5,9 +5,9 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from shapely.geometry import LineString, Point
-from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from .decomposition import Decomposition, build_decomposition
@@ -21,7 +21,11 @@ from .models import (
     SprayLeg,
 )
 from .routing import VisibilityRouter
-from .scenarios import Scenario
+
+if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
+
+    from .scenarios import Scenario
 
 
 @dataclass(frozen=True)
@@ -54,8 +58,7 @@ def select_field_edge(
     """Resolve one exterior vertex to the outgoing edge that defines the sweep direction."""
 
     coordinates = tuple(
-        (float(east), float(north))
-        for east, north in tuple(scenario.field.exterior.coords)[:-1]
+        (float(east), float(north)) for east, north in tuple(scenario.field.exterior.coords)[:-1]
     )
     if not coordinates:
         raise ValueError("Field polygon has no selectable exterior vertices")
@@ -256,8 +259,11 @@ class _OptimizationModel:
         self.entry = entry
         self.variants_by_cell: dict[int, tuple[int, ...]] = {}
         for index, variant in enumerate(variants):
-            self.variants_by_cell.setdefault(variant.cell_id, tuple())
-            self.variants_by_cell[variant.cell_id] = (*self.variants_by_cell[variant.cell_id], index)
+            self.variants_by_cell.setdefault(variant.cell_id, ())
+            self.variants_by_cell[variant.cell_id] = (
+                *self.variants_by_cell[variant.cell_id],
+                index,
+            )
         self._transition_segment_cache: dict[tuple[int, int], tuple[RouteSegment, ...] | None] = {}
         self._transition_cost_cache: dict[tuple[int, int], float] = {}
         self._entry_segment_cache: dict[int, tuple[RouteSegment, ...] | None] = {}
@@ -268,8 +274,7 @@ class _OptimizationModel:
         if self.entry is None:
             return frozenset(range(len(self.variants)))
         distances = [
-            _spray_line_distance(self.entry, variant.segments[0])
-            for variant in self.variants
+            _spray_line_distance(self.entry, variant.segments[0]) for variant in self.variants
         ]
         if not distances:
             return frozenset()
@@ -280,7 +285,9 @@ class _OptimizationModel:
             if candidate_distance <= nearest_distance + self.config.geometry_tolerance
         )
 
-    def transition_segments(self, first_index: int, second_index: int) -> tuple[RouteSegment, ...] | None:
+    def transition_segments(
+        self, first_index: int, second_index: int
+    ) -> tuple[RouteSegment, ...] | None:
         key = (first_index, second_index)
         if key in self._transition_segment_cache:
             return self._transition_segment_cache[key]
@@ -355,7 +362,7 @@ class _OptimizationModel:
         if not sequence:
             return math.inf
         cost = self.entry_cost(sequence[0]) + self.variants[sequence[0]].intrinsic_time_seconds
-        for first_index, second_index in zip(sequence, sequence[1:], strict=False):
+        for first_index, second_index in itertools.pairwise(sequence):
             cost += self.transition_cost(first_index, second_index)
             cost += self.variants[second_index].intrinsic_time_seconds
         return cost
@@ -367,7 +374,7 @@ class _OptimizationModel:
         if entry_segments is None:
             return None
         materialized: list[RouteSegment] = [*entry_segments, *self.variants[sequence[0]].segments]
-        for first_index, second_index in zip(sequence, sequence[1:], strict=False):
+        for first_index, second_index in itertools.pairwise(sequence):
             connector = self.transition_segments(first_index, second_index)
             if connector is None:
                 return None
@@ -399,7 +406,9 @@ def solve_exact_open_route(model: _OptimizationModel) -> tuple[float, tuple[int,
                 if mask & next_bit:
                     continue
                 transition_cost = model.transition_cost(last_index, next_index)
-                candidate_cost = current_cost + transition_cost + next_variant.intrinsic_time_seconds
+                candidate_cost = (
+                    current_cost + transition_cost + next_variant.intrinsic_time_seconds
+                )
                 next_state = (mask | next_bit, next_index)
                 next_states = states_by_mask.setdefault(next_state[0], {})
                 incumbent = next_states.get(next_index, math.inf)
@@ -408,8 +417,7 @@ def solve_exact_open_route(model: _OptimizationModel) -> tuple[float, tuple[int,
                     parents[next_state] = (mask, last_index)
 
     final_states = [
-        (cost, variant_index)
-        for variant_index, cost in states_by_mask.get(full_mask, {}).items()
+        (cost, variant_index) for variant_index, cost in states_by_mask.get(full_mask, {}).items()
     ]
     if not final_states:
         return math.inf, ()
@@ -431,7 +439,9 @@ def _best_variants_for_cell_order(
     costs: dict[int, float] = {}
     paths: dict[int, tuple[int, ...]] = {}
     for variant_index in model.variants_by_cell[cell_order[0]]:
-        costs[variant_index] = model.entry_cost(variant_index) + model.variants[variant_index].intrinsic_time_seconds
+        costs[variant_index] = (
+            model.entry_cost(variant_index) + model.variants[variant_index].intrinsic_time_seconds
+        )
         paths[variant_index] = (variant_index,)
     for cell_id in cell_order[1:]:
         next_costs: dict[int, float] = {}
@@ -478,14 +488,16 @@ def solve_heuristic_open_route(model: _OptimizationModel) -> tuple[float, tuple[
             route_endpoints = [model.variants[index].start for index in sequence]
             route_endpoints.extend(model.variants[index].end for index in sequence)
 
-            def proximity(cell_id: int) -> float:
+            def proximity(cell_id: int, route_endpoints: list[Point2D] = route_endpoints) -> float:
                 return min(
                     distance(endpoint, model.variants[index].start)
                     for endpoint in route_endpoints
                     for index in model.variants_by_cell[cell_id]
                 )
 
-            candidate_cells = set(sorted(cells, key=lambda cell_id: (proximity(cell_id), cell_id))[:12])
+            candidate_cells = set(
+                sorted(cells, key=lambda cell_id: (proximity(cell_id), cell_id))[:12]
+            )
 
         best: tuple[float, tuple[int, ...], int] | None = None
         for cell_id in sorted(candidate_cells):
@@ -515,7 +527,9 @@ def solve_heuristic_open_route(model: _OptimizationModel) -> tuple[float, tuple[
                     *reversed(cell_order[first : last + 1]),
                     *cell_order[last + 1 :],
                 )
-                candidate_cost, candidate_sequence = _best_variants_for_cell_order(model, candidate_order)
+                candidate_cost, candidate_sequence = _best_variants_for_cell_order(
+                    model, candidate_order
+                )
                 if candidate_cost + model.config.geometry_tolerance < best_cost:
                     best_cost = candidate_cost
                     sequence = candidate_sequence
@@ -529,10 +543,16 @@ def solve_heuristic_open_route(model: _OptimizationModel) -> tuple[float, tuple[
         for source in range(len(cell_order)):
             reduced = (*cell_order[:source], *cell_order[source + 1 :])
             for destination in range(len(reduced) + 1):
-                candidate_order = (*reduced[:destination], cell_order[source], *reduced[destination:])
+                candidate_order = (
+                    *reduced[:destination],
+                    cell_order[source],
+                    *reduced[destination:],
+                )
                 if candidate_order == cell_order:
                     continue
-                candidate_cost, candidate_sequence = _best_variants_for_cell_order(model, candidate_order)
+                candidate_cost, candidate_sequence = _best_variants_for_cell_order(
+                    model, candidate_order
+                )
                 if candidate_cost + model.config.geometry_tolerance < best_cost:
                     best_cost = candidate_cost
                     sequence = candidate_sequence
@@ -555,7 +575,7 @@ class CoveragePlanner:
             return scenario.field
         expanded_obstacles = unary_union(
             [
-                obstacle.buffer(self.config.obstacle_clearance, join_style=2)
+                obstacle.buffer(self.config.obstacle_clearance, join_style="mitre")
                 for obstacle in scenario.obstacles
             ]
         )
@@ -569,7 +589,9 @@ class CoveragePlanner:
         entry: Point2D | None,
         selection: FieldEdgeSelection,
     ) -> ScenarioResult:
-        decomposition = build_decomposition(self._navigation_space(scenario), angle_degrees, self.config)
+        decomposition = build_decomposition(
+            self._navigation_space(scenario), angle_degrees, self.config
+        )
         baseline = _build_legacy_route(decomposition, router, self.config, entry)
         variants = _build_cell_variants(decomposition, router, self.config)
         active_cell_count = len({variant.cell_id for variant in variants})
@@ -606,7 +628,8 @@ class CoveragePlanner:
 
         if baseline.metrics.valid and (
             not optimized.metrics.valid
-            or optimized.metrics.estimated_time_s > baseline.metrics.estimated_time_s + self.config.geometry_tolerance
+            or optimized.metrics.estimated_time_s
+            > baseline.metrics.estimated_time_s + self.config.geometry_tolerance
         ):
             optimized = replace(
                 baseline,

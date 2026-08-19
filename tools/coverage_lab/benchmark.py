@@ -39,7 +39,9 @@ class BenchmarkResult:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Measure planner calculation time without report generation.")
+    parser = argparse.ArgumentParser(
+        description="Measure planner calculation time without report generation."
+    )
     parser.add_argument("--scenario", choices=scenario_names(), default="large_circle")
     parser.add_argument("--all", action="store_true", help="benchmark every deterministic scenario")
     parser.add_argument("--spacing", type=float, default=8.0)
