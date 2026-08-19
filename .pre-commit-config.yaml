@@ -144,27 +144,21 @@ repos:
       - id: markdownlint
         exclude: ^(translations/|tools/skills/|docs/(zh|ko|tr|ru|ja|de|es|fa|fr|he|uk)/|CHANGELOG\.md)
 
-  # Prose linting (documentation quality)
-  # vale-sync downloads the Packages declared in .vale.ini into the gitignored
-  # .github/styles/ before vale runs; without it vale has no styles and no-ops.
+  # Prose linting (documentation quality) using the pinned official release.
   - repo: local
     hooks:
       - id: vale-sync
         name: vale sync (download styles)
-        language: golang
-        # The vale module root carries no Go package (the binary lives under cmd/vale), so a go
-        # install of the bare module fails and aborts the whole pre-commit run before any hook
-        # fires.
-        additional_dependencies:
-          - 'github.com/errata-ai/vale/v3/cmd/vale@v3.15.1'
-        entry: vale sync
+        language: python
+        entry: python tools/vale_runner.py sync
         files: ^(docs/|\.vale\.ini$)
         pass_filenames: false
-  - repo: https://github.com/errata-ai/vale
-    rev: v3.15.1
-    hooks:
       - id: vale
+        name: vale (documentation prose lint)
+        language: python
+        entry: python tools/vale_runner.py
         files: ^docs/
+        types: [text]
         args: ['--no-exit']  # Don't fail on warnings, just report
 
   # Spell checking (report-only, doesn't auto-fix)
