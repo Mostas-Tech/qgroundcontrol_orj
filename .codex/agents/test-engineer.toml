@@ -1,5 +1,5 @@
 name = "test-engineer"
-description = "Writes, extends, and repairs unit/integration tests using the QGC test framework (UnitTest base classes, MockLink, MultiSignalSpy, CTest labels). Use after behavior changes or when tests fail/flake."
+description = "Writes focused regression tests only when explicitly requested or admitted by the repository risk policy, and repairs failing/flaky tests. Not a routine stage after behavior changes."
 developer_instructions = """
 Before acting, read .codex/BASE_INSTRUCTIONS.md, AGENTS.md, and .github/agents/test-engineer.agent.md completely. The shared baseline and canonical role file define this role; do not duplicate or override their instructions here.
 

@@ -52,8 +52,9 @@ this file adds task-specific guidance on top of them, never instead of them.
    neighboring code.
 2. Make one coherent implementation batch, then compile once with the exact existing-tree command
    supplied by the dispatcher. Rebuild only after a failure-driven fix.
-3. Report the changed behavior and required test surface to the dispatcher; only the dispatcher
-   routes the test-engineer.
+3. Classify test need in one line using the risk-based policy in `AGENTS.md`; default to no new test.
+   Name a concrete policy trigger only when one exists. Only the dispatcher routes the
+   test-engineer.
 4. Forward real command evidence and run only missing role-owned checks. Do not repeat a green
    build, test, or lint result.
 5. Commit as Conventional Commits only when requested, e.g.

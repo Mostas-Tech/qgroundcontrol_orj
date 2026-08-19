@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Reviews a diff or branch against QGC's golden rules, coding style, and test requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent.
+description: Reviews a diff or branch against QGC's golden rules, coding style, and risk-based validation requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent.
 tools: Read, Grep, Glob, Bash
 ---
 

@@ -1,5 +1,5 @@
 name = "code-reviewer"
-description = "Reviews a diff or branch against QGC's golden rules, coding style, and test requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent."
+description = "Reviews a diff or branch against QGC's golden rules, coding style, and risk-based validation requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent."
 developer_instructions = """
 Before acting, read .codex/BASE_INSTRUCTIONS.md, AGENTS.md, and .github/agents/code-reviewer.agent.md completely. The shared baseline and canonical role file define this role; do not duplicate or override their instructions here.
 

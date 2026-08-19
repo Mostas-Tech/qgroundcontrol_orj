@@ -75,7 +75,7 @@ context replay.
 | ----- | ------- |
 | `cpp-core` | C++/Qt feature work and bug fixes |
 | `qml-ui` | Any user-facing QML change |
-| `test-engineer` | Writing/extending tests, fixing flaky tests |
+| `test-engineer` | Risk-selected regression tests and fixing failing/flaky tests; not a routine stage |
 | `code-reviewer` | Pre-merge review of every branch (read-only) |
 | `build-ci` | Build breakage, lint/pre-commit failures, GitHub Actions failures |
 | `dispatcher` | Orchestrating a whole job across the other agents (Claude Code: `/dispatch`) |
@@ -148,17 +148,44 @@ just configure          # CMake configure (pulls submodules first)
 just build              # incremental build; uses all cores (override with JOBS=N)
 just test               # ctest, LABELS="Unit|Integration" EXCLUDE="Flaky|Network"
 just lint               # fast pre-commit gate (clang-format, ruff, qmllint, ...)
-just check              # lint + test (run before declaring done)
+just check              # lint + test; use only when the selected validation scope requires both
 just format-fix         # apply clang-format / ruff-format
 just info               # print resolved versions (Qt, CMake, GStreamer)
 ```
 
 - **Build coherent batches** — compile once after a coherent implementation batch; rebuild only
   after a failure-driven fix.
-- **Tight test loops** — iterate one test with `ctest -R <name>` (or `--gtest_filter`); only run the full label on the final pass. CI runs `ctest --output-on-failure -L Unit`.
+- **Tight test loops** — when a test is justified by the policy below, run the narrowest selection
+  once with `just test-one <name>` and repeat only after a failure-driven fix.
 - **Match CI** — before running tests/lint locally, use the same command CI runs ([.github/ci-overview.md](.github/ci-overview.md)), not a local guess.
 - **Reuse evidence** — in dispatched jobs, each owner runs its gate once and forwards the real
   command output; other agents do not rerun a green gate.
+
+## Risk-Based Test Policy (cost default)
+
+**Default: do not create or modify tests, do not dispatch `test-engineer`, and do not run a test
+command.** A behavior change by itself is not a reason to add tests. Build/lint/visual verification
+may be the complete validation for a low-risk change.
+
+Tests are justified only when at least one of these is true:
+
+1. The user, issue, or acceptance criteria explicitly require tests.
+2. A bug fix has a concrete regression scenario and a stable focused test would have caught it.
+3. The change affects high-risk logic: flight safety, mission/path generation, arming/vehicle
+   commands, failsafe behavior, parameter persistence, link/protocol parsing, security, or data loss.
+4. A non-trivial algorithm/state machine changes in a way with distinct edge cases not covered by
+   an existing test.
+5. An existing test is failing or flaky and the task is to repair it.
+
+Normally skip new tests for visual QML/layout changes, text, branding, resources, documentation,
+agent/config/build metadata, mechanical refactors, simple property/signal wiring, logging, defensive
+guards, and behavior already covered by an existing test. Line count, a new code path, or a desire
+to increase coverage is not enough by itself.
+
+When a trigger applies, add at most one focused regression-test batch, preferably in an existing
+test file, and run only `just test-one <name>`. Do not run a label or full suite unless the user or
+CI explicitly requests it. When no trigger applies, record a one-line reason such as
+`Tests not added/run: low-risk visual-only change`; do not produce a test plan or coverage essay.
 
 ## Definition of Done
 
@@ -167,8 +194,9 @@ Before considering a change complete:
 1. Where available, the canonical `just build` and `just lint` gates pass. Where they are
    unavailable, use the documented platform fallback (on the verified Windows machine, see
    [.github/skills/windows-dev-env/SKILL.md](.github/skills/windows-dev-env/SKILL.md)).
-2. Targeted relevant tests pass (`ctest -R <name>` for the touched area).
-3. Run the full `-L Unit` suite only when the job or CI explicitly requests it.
+2. Tests are conditional under the risk-based policy above. When a trigger applies, the smallest
+   relevant selection passes via `just test-one <name>`; otherwise no test run is required.
+3. Run `just test` only when the user or CI explicitly requests a broader suite.
 4. When a commit is requested, its message follows Conventional Commits (below).
 
 ## Commit & Review Conventions

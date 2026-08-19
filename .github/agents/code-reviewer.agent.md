@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Reviews a diff or branch against QGC's golden rules, coding style, and test requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent.
+description: Reviews a diff or branch against QGC's golden rules, coding style, and risk-based validation requirements before merge. Read-only — reports findings, does not edit. Use on every PR from either developer to keep the two-person team consistent.
 argument-hint: What to review, e.g., "the current branch vs master" or "the last 3 commits".
 model: gpt-5.6-sol
 tools: ['vscode', 'execute', 'read', 'search', 'todo']
@@ -53,8 +53,10 @@ baseline — anything that violates them is a finding, regardless of the checkli
 
 ## Process checklist
 
-- Behavior changes have tests (few and strong — flag redundant/tautological tests too, per
-  [test/README.md](../../test/README.md) quality rules)
+- Apply the [risk-based test policy](../../AGENTS.md#risk-based-test-policy-cost-default). Do not
+  flag missing tests for low-risk changes or merely because behavior/C++ changed. Flag missing
+  coverage only when a named policy trigger applies and cite the concrete regression or high-risk
+  failure path. Continue to flag redundant/tautological tests.
 - When commits are part of the review, their messages are Conventional Commits with the correct
   type (`feat`/`fix`/`perf` trigger releases). Do not flag absent commits in an uncommitted
   worktree.

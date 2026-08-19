@@ -27,7 +27,7 @@ Every agent operates under the repo-wide rules in [AGENTS.md](../../AGENTS.md) (
 | ----- | ------- |
 | [cpp-core](cpp-core.agent.md) | C++/Qt feature work and bug fixes (Vehicle, Comms, FactSystem, MissionManager, ...) |
 | [qml-ui](qml-ui.agent.md) | Any user-facing QML change (FlyView, PlanView, QmlControls, setup pages) |
-| [test-engineer](test-engineer.agent.md) | Writing/extending tests, fixing flaky tests |
+| [test-engineer](test-engineer.agent.md) | Risk-selected regression tests and fixing failing/flaky tests; not a routine stage |
 | [code-reviewer](code-reviewer.agent.md) | Pre-merge review of every branch — read-only, reports findings |
 | [build-ci](build-ci.agent.md) | Build breakage, pre-commit/lint failures, GitHub Actions failures |
 | [dispatcher](dispatcher.agent.md) | Orchestrating a whole job across the agents above — plans, routes, gates, reports |
@@ -43,8 +43,9 @@ wrapper.
 1. **dispatcher** probes once, makes a context packet, and assigns one implementation owner per
    disjoint area; overlapping files/contracts are serialized.
 2. **cpp-core** and/or **qml-ui** implement, retaining their context for failure-driven follow-ups.
-3. One **test-engineer** owns narrow targeted tests until green; run a related label only when
-   required.
+3. Apply the `AGENTS.md` risk policy. Usually skip tests and do not dispatch **test-engineer**.
+   When a named trigger applies, one test owner adds one focused batch and runs one
+   `just test-one` selection.
 4. One command-only **build-ci** final gate runs build/lint and classifies the first real failure.
    Domain failures return to the existing owner; build-ci edits only build/tooling/lint/CI ownership.
 5. One **code-reviewer** performs the consolidated final review. One failure-driven fix/review cycle
