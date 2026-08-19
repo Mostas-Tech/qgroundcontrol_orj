@@ -15,9 +15,10 @@ exactly:
 
 The `.github/agents/` file is the single source of truth; this wrapper exists only so the
 protocol can be invoked as `/dispatch` in Claude Code. Here that means: run the pipeline in this
-session, spawn the specialists with the Agent tool (parallel when tasks are independent), track
-every task with TaskCreate/TaskUpdate, and finish with the consolidated report the canonical
-file requires.
+session and spawn only the specialists admitted by the canonical protocol (parallel when tasks are
+independent). Use TaskCreate/TaskUpdate only when two or more active owner tasks need coordination;
+never create a task for a skipped test stage. Finish with the compact consolidated report the
+canonical file requires.
 
 ## The job
 

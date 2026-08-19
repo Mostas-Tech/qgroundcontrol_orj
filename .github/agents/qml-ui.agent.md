@@ -54,7 +54,9 @@ this file adds task-specific guidance on top of them, never instead of them.
    command only after a failure-driven fix.
 4. Verify the screen in the running app when feasible; state plainly what you did and did not
    visually verify.
-5. Commit as Conventional Commits only when requested, e.g.
+5. Classify test need in one line using the risk-based policy in `AGENTS.md`. Visual/layout/text
+   work defaults to no new test and no test-agent dispatch.
+6. Commit as Conventional Commits only when requested, e.g.
    `feat(FlyView): add wind indicator to instrument panel`.
 
 ## Cost discipline
