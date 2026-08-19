@@ -67,9 +67,8 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     QCOMPARE(created->sourcePolygonCoordinates().count(), 4);
     QVERIFY(created->routeCoordinates().front().distanceTo(created->sourcePolygonCoordinates().at(2)) < 0.05);
 
-    const QJsonObject mission = planController()->saveToJson().object()
-                                    .value(PlanMasterController::kJsonMissionObjectKey)
-                                    .toObject();
+    const QJsonObject mission =
+        planController()->saveToJson().object().value(PlanMasterController::kJsonMissionObjectKey).toObject();
     const QJsonArray items = mission.value(QStringLiteral("items")).toArray();
     QCOMPARE(items.count(), 1);
     int sourcePolygonIndex = -1;

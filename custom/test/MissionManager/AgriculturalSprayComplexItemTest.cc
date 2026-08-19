@@ -80,8 +80,8 @@ void AgriculturalSprayComplexItemTest::rapidDirectionChangesPublishLatestRoute()
     AgriculturalSprayComplexItem* const item = qobject_cast<AgriculturalSprayComplexItem*>(
         missionController()->insertComplexMissionItem(AgriculturalSprayComplexItem::canonicalName, center, -1, false));
     QVERIFY(item);
-    QGCFencePolygon* const polygon = geoFenceController()->polygons()->value<QGCFencePolygon*>(
-        geoFenceController()->polygons()->count() - 1);
+    QGCFencePolygon* const polygon =
+        geoFenceController()->polygons()->value<QGCFencePolygon*>(geoFenceController()->polygons()->count() - 1);
     QVERIFY(polygon);
     polygon->setPath(square(center, 160.0));
     polygon->setTraceMode(false);
@@ -169,8 +169,8 @@ void AgriculturalSprayComplexItemTest::_factMetadataAndAreaStates()
     QCOMPARE(dropletClass->metaData()->rawMin().toUInt(), 1U);
     QCOMPARE(dropletClass->metaData()->rawMax().toUInt(), 3U);
     QVERIFY(dropletClass->rawUnits().isEmpty());
-    QCOMPARE(dropletClass->enumStrings(), QStringList({QStringLiteral("Fine"), QStringLiteral("Medium"),
-                                                        QStringLiteral("Coarse")}));
+    QCOMPARE(dropletClass->enumStrings(),
+             QStringList({QStringLiteral("Fine"), QStringLiteral("Medium"), QStringLiteral("Coarse")}));
     QCOMPARE(dropletClass->enumValues(), QVariantList({1, 2, 3}));
 
     _item->beginInteractiveCreation();
@@ -210,8 +210,7 @@ void AgriculturalSprayComplexItemTest::_fenceEditsRebuildWhileDirty()
     QList<QGeoCoordinate> oversizedPath;
     const QGeoCoordinate outsideCenter = center.atDistanceAndAzimuth(500.0, 90.0);
     for (int index = 0; index < 257; ++index) {
-        oversizedPath.append(
-            outsideCenter.atDistanceAndAzimuth(20.0, static_cast<double>(index) * 360.0 / 257.0));
+        oversizedPath.append(outsideCenter.atDistanceAndAzimuth(20.0, static_cast<double>(index) * 360.0 / 257.0));
     }
     oversizedExclusion->setPath(oversizedPath);
     _waitForStatus(AgriculturalSprayComplexItem::Ready);
@@ -384,8 +383,7 @@ void AgriculturalSprayComplexItemTest::_jsonRoundTripIsStrictAndSelfContained()
     for (const QString& key :
          {QStringLiteral("version"), QStringLiteral("type"), QStringLiteral("complexItemType"),
           QStringLiteral("Altitude"), QStringLiteral("LineSpacing"), QStringLiteral("directionVertexIndex"),
-          QStringLiteral("DropletClass"), QStringLiteral("ApplicationRate"),
-          QStringLiteral("sourcePolygonIndex")}) {
+          QStringLiteral("DropletClass"), QStringLiteral("ApplicationRate"), QStringLiteral("sourcePolygonIndex")}) {
         QVERIFY2(saved.contains(key), qPrintable(key));
     }
     QVERIFY(!saved.contains(QStringLiteral("GridAngle")));
@@ -438,8 +436,9 @@ void AgriculturalSprayComplexItemTest::_legacySourcePolygonReferenceBindsWithWar
     QVERIFY(polygon);
     polygon->setPath(square(QGeoCoordinate(47.397742, 8.545594), 100.0));
 
-    expectLogMessage("qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("Legacy Agricultural Spray plan has no source polygon reference")));
+    expectLogMessage(
+        "qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
+        QRegularExpression(QStringLiteral("Legacy Agricultural Spray plan has no source polygon reference")));
     QString errorString;
     QVERIFY(_item->load(sprayJson(), 7, errorString));
     QVERIFY(errorString.isEmpty());
@@ -496,7 +495,8 @@ void AgriculturalSprayComplexItemTest::_deletedSourcePolygonReportsExplicitError
     QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
 
     expectLogMessage("qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
-                     QRegularExpression(QStringLiteral("Route input snapshot failed.*selected spray inclusion polygon was deleted")));
+                     QRegularExpression(
+                         QStringLiteral("Route input snapshot failed.*selected spray inclusion polygon was deleted")));
     geoFenceController()->deletePolygon(0);
     QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::GenerationError, TestTimeout::shortMs());
     QVERIFY(_item->errorText().contains(QStringLiteral("deleted")));

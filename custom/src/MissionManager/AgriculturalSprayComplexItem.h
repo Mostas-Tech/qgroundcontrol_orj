@@ -1,7 +1,5 @@
 #pragma once
 
-#include <optional>
-
 #include <QtCore/QFutureWatcher>
 #include <QtCore/QList>
 #include <QtCore/QLoggingCategory>
@@ -10,6 +8,7 @@
 #include <QtCore/QPointer>
 #include <QtCore/QString>
 #include <QtPositioning/QGeoCoordinate>
+#include <optional>
 
 #include "AgriculturalSprayPlanner.h"
 #include "ComplexMissionItem.h"
@@ -34,8 +33,8 @@ class AgriculturalSprayComplexItem final : public ComplexMissionItem
     Q_PROPERTY(Fact* lineSpacing READ lineSpacing CONSTANT)
     Q_PROPERTY(Fact* gridAngle READ gridAngle CONSTANT)
     Q_PROPERTY(Fact* entryCorner READ entryCorner CONSTANT)
-    Q_PROPERTY(
-        int directionVertexIndex READ directionVertexIndex WRITE setDirectionVertexIndex NOTIFY directionVertexIndexChanged)
+    Q_PROPERTY(int directionVertexIndex READ directionVertexIndex WRITE setDirectionVertexIndex NOTIFY
+                   directionVertexIndexChanged)
     Q_PROPERTY(QList<QGeoCoordinate> sourcePolygonCoordinates READ sourcePolygonCoordinates NOTIFY
                    sourcePolygonCoordinatesChanged)
     Q_PROPERTY(QGeoCoordinate directionEdgeStart READ directionEdgeStart NOTIFY directionEdgeChanged)

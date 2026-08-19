@@ -32,12 +32,8 @@ PlannerInput scenarioInput(int scenario, int directionVertexIndex)
             input.exclusions = {rectangle(70.0, 130.0, 50.0, 110.0)};
             break;
         case 3:
-            input.inclusions = {Polygon{{{0.0, 0.0},
-                                         {200.0, 0.0},
-                                         {200.0, 60.0},
-                                         {90.0, 60.0},
-                                         {90.0, 160.0},
-                                         {0.0, 160.0}}}};
+            input.inclusions = {
+                Polygon{{{0.0, 0.0}, {200.0, 0.0}, {200.0, 60.0}, {90.0, 60.0}, {90.0, 160.0}, {0.0, 160.0}}}};
             break;
         case 4:
             input.exclusions = {Circle{{65.0, 55.0}, 25.0}, rectangle(115.0, 160.0, 90.0, 135.0)};
@@ -50,8 +46,7 @@ PlannerInput scenarioInput(int scenario, int directionVertexIndex)
             break;
         case 7:
             input.inclusions = {rectangle(0.0, 160.0, 0.0, 120.0)};
-            input.exclusions = {Circle{{40.0, 35.0}, 15.0},
-                                Circle{{125.0, 85.0}, 18.0},
+            input.exclusions = {Circle{{40.0, 35.0}, 15.0}, Circle{{125.0, 85.0}, 18.0},
                                 rectangle(70.0, 95.0, 50.0, 72.0)};
             input.limits.exactCellLimit = 1;
             break;
@@ -126,13 +121,13 @@ void AgriculturalSprayBcdPlannerTest::_eightMeterScenarios()
     for (const SprayLeg& leg : result.legs) {
         const Point legDirection = leg.end - leg.start;
         QVERIFY(length(legDirection) > 1e-8);
-        const double crossProduct = legDirection.north * normalizedSweep.east -
-                                    legDirection.east * normalizedSweep.north;
+        const double crossProduct =
+            legDirection.north * normalizedSweep.east - legDirection.east * normalizedSweep.north;
         QVERIFY(std::abs(crossProduct) <= 1e-6 * length(legDirection));
     }
     const Point firstLegDirection = result.legs.front().end - result.legs.front().start;
-    const double firstDirectionDot = firstLegDirection.north * normalizedSweep.north +
-                                     firstLegDirection.east * normalizedSweep.east;
+    const double firstDirectionDot =
+        firstLegDirection.north * normalizedSweep.north + firstLegDirection.east * normalizedSweep.east;
     QVERIFY(firstDirectionDot > 0.0);
     for (std::size_t index = 1; index < result.route.size(); ++index) {
         QVERIFY(distance(result.route[index - 1].position, result.route[index].position) > 1e-8);
