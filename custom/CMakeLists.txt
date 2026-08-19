@@ -25,6 +25,7 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayPlanner.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/AgriculturalSprayEditor.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/AgriculturalSprayMapVisual.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/GeoFenceMapVisuals.qml
     CACHE INTERNAL "" FORCE
 )
 

@@ -6,4 +6,7 @@
         <file alias="AgriculturalSprayEditor.qml">src/PlanView/AgriculturalSprayEditor.qml</file>
         <file alias="AgriculturalSprayMapVisual.qml">src/PlanView/AgriculturalSprayMapVisual.qml</file>
     </qresource>
+    <qresource prefix="/Custom/qml/QGroundControl/PlanView">
+        <file alias="GeoFenceMapVisuals.qml">src/PlanView/GeoFenceMapVisuals.qml</file>
+    </qresource>
 </RCC>
