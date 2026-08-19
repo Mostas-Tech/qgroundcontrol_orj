@@ -11,6 +11,7 @@ from .planner import CoveragePlanner
 from .reporting import result_document, write_aggregate, write_result
 from .scenarios import get_scenario, scenario_names
 
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Compare global scanlines with an obstacle-aware BCD agricultural coverage route.",
@@ -60,7 +61,9 @@ def main() -> int:
                     "cells": len(result.decomposition.cells),
                     "legacy_time_s": round(result.baseline.metrics.estimated_time_s, 3),
                     "optimized_time_s": round(result.optimized.metrics.estimated_time_s, 3),
-                    "time_improvement_percent": round(document["improvement"]["estimated_time_percent"], 3),
+                    "time_improvement_percent": round(
+                        document["improvement"]["estimated_time_percent"], 3
+                    ),
                     "output": str(arguments.output_dir / name),
                 },
                 sort_keys=True,

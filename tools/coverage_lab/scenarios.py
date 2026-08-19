@@ -5,12 +5,15 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shapely.geometry import Point, Polygon, box
-from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from .models import Point2D
+if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
+
+    from .models import Point2D
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,16 @@ def _build_scenarios() -> dict[str, Scenario]:
         ),
         "l_field": Scenario(
             name="l_field",
-            field=Polygon([(0.0, 0.0), (320.0, 0.0), (320.0, 95.0), (135.0, 95.0), (135.0, 240.0), (0.0, 240.0)]),
+            field=Polygon(
+                [
+                    (0.0, 0.0),
+                    (320.0, 0.0),
+                    (320.0, 95.0),
+                    (135.0, 95.0),
+                    (135.0, 240.0),
+                    (0.0, 240.0),
+                ]
+            ),
             obstacles=(_circle((70.0, 155.0), 28.0, chord_error=0.1),),
             description="Concave L-shaped field with one obstacle.",
         ),

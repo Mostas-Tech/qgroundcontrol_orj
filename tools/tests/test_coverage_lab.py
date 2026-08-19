@@ -13,8 +13,8 @@ from tools.coverage_lab.decomposition import build_decomposition
 from tools.coverage_lab.models import PlannerConfig
 from tools.coverage_lab.planner import (
     CoveragePlanner,
-    _OptimizationModel,
     _build_cell_variants,
+    _OptimizationModel,
     solve_exact_open_route,
 )
 from tools.coverage_lab.reporting import result_document
@@ -47,7 +47,9 @@ def test_plans_preserve_swaths_and_stay_in_free_space(scenario_name: str) -> Non
         abs=1e-7,
     )
     for segment in result.optimized.segments:
-        assert LineString([segment.start, segment.end]).difference(scenario.free_space).length <= 1e-7
+        assert (
+            LineString([segment.start, segment.end]).difference(scenario.free_space).length <= 1e-7
+        )
 
 
 @pytest.mark.parametrize("scenario_name", ["large_circle", "large_polygon", "two_obstacles"])
@@ -78,11 +80,15 @@ def test_large_circle_avoids_repeating_the_full_obstacle_detour() -> None:
 
 
 def test_empty_rectangle_has_one_cell_and_no_regression() -> None:
-    result = CoveragePlanner(PlannerConfig(swath_spacing=10.0)).plan(get_scenario("empty_rectangle"))
+    result = CoveragePlanner(PlannerConfig(swath_spacing=10.0)).plan(
+        get_scenario("empty_rectangle")
+    )
 
     active_cells = [cell for cell in result.decomposition.cells if cell.legs]
     assert len(active_cells) == 1
-    assert result.optimized.metrics.estimated_time_s <= result.baseline.metrics.estimated_time_s + 1e-7
+    assert (
+        result.optimized.metrics.estimated_time_s <= result.baseline.metrics.estimated_time_s + 1e-7
+    )
     assert result.optimized.metrics.transit_distance_m == pytest.approx(
         result.baseline.metrics.transit_distance_m,
         abs=1e-7,
@@ -173,7 +179,9 @@ def test_slanted_field_edge_produces_its_exact_sweep_heading() -> None:
     assert result.selection.angle_degrees == pytest.approx(math.degrees(math.atan2(30.0, 120.0)))
     first_spray = next(segment for segment in result.optimized.segments if segment.spray)
     selected_point = Point(result.selection.point)
-    assert selected_point.distance(LineString([first_spray.start, first_spray.end])) == pytest.approx(
+    assert selected_point.distance(
+        LineString([first_spray.start, first_spray.end])
+    ) == pytest.approx(
         min(
             selected_point.distance(LineString([leg.left, leg.right]))
             for leg in result.decomposition.legs
@@ -185,14 +193,16 @@ def test_slanted_field_edge_produces_its_exact_sweep_heading() -> None:
 def test_field_vertex_index_must_address_an_exterior_polygon_point() -> None:
     planner = CoveragePlanner(PlannerConfig(swath_spacing=10.0))
 
-    with pytest.raises(ValueError, match="valid range 0..3"):
+    with pytest.raises(ValueError, match=r"valid range 0..3"):
         planner.plan(get_scenario("empty_rectangle"), field_vertex_index=4)
 
 
 def test_seeded_stress_scenario_is_deterministic_and_uses_bounded_optimizer() -> None:
     first = get_scenario("seeded_stress")
     second = get_scenario("seeded_stress")
-    assert [obstacle.wkt for obstacle in first.obstacles] == [obstacle.wkt for obstacle in second.obstacles]
+    assert [obstacle.wkt for obstacle in first.obstacles] == [
+        obstacle.wkt for obstacle in second.obstacles
+    ]
 
     config = PlannerConfig(swath_spacing=40.0, exact_cell_limit=4)
     result = CoveragePlanner(config).plan(first)

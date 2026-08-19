@@ -5,12 +5,15 @@ from __future__ import annotations
 import heapq
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from shapely.geometry import LineString
-from shapely.geometry.base import BaseGeometry
 
 from .geometry import boundary_vertices, distance
 from .models import PlannerConfig, Point2D, RouteSegment
+
+if TYPE_CHECKING:
+    from shapely.geometry.base import BaseGeometry
 
 
 @dataclass(frozen=True)
@@ -55,7 +58,9 @@ class VisibilityRouter:
                     self._adjacency[first_index].append((second_index, edge_length))
                     self._adjacency[second_index].append((first_index, edge_length))
 
-    def _advances(self, start: Point2D, candidate: Point2D, initial_direction: Point2D | None) -> bool:
+    def _advances(
+        self, start: Point2D, candidate: Point2D, initial_direction: Point2D | None
+    ) -> bool:
         if initial_direction is None:
             return True
         delta_x = candidate[0] - start[0]
@@ -130,7 +135,9 @@ class VisibilityRouter:
                 break
             for neighbor, edge_length in neighbors(current):
                 candidate_cost = current_cost + edge_length
-                if candidate_cost + self._config.geometry_tolerance >= costs.get(neighbor, math.inf):
+                if candidate_cost + self._config.geometry_tolerance >= costs.get(
+                    neighbor, math.inf
+                ):
                     continue
                 costs[neighbor] = candidate_cost
                 parents[neighbor] = current
