@@ -1,5 +1,6 @@
 #include "AgriculturalSprayComplexItem.h"
 
+#include <QtConcurrent/QtConcurrentRun>
 #include <QtCore/QAbstractItemModel>
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
@@ -13,8 +14,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <QtConcurrent/QtConcurrentRun>
 
 #include "AgriculturalSprayGeometry.h"
 #include "AgriculturalSprayPlanner.h"
@@ -256,10 +255,9 @@ void AgriculturalSprayComplexItem::_connectPolygonSignals(QGCFencePolygon* polyg
         connect(polygon, &QGCMapPolygon::dragCenterChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
     _shapeConnections.append(
         connect(polygon, &QGCFencePolygon::inclusionChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
-    _shapeConnections.append(connect(polygon, &QGCMapPolygon::traceModeChanged, this,
-                                     [this, polygon](bool traceMode) {
-                                         _sourcePolygonTraceModeChanged(polygon, traceMode);
-                                     }));
+    _shapeConnections.append(connect(polygon, &QGCMapPolygon::traceModeChanged, this, [this, polygon](bool traceMode) {
+        _sourcePolygonTraceModeChanged(polygon, traceMode);
+    }));
     _shapeConnections.append(
         connect(polygon, &QObject::destroyed, this, &AgriculturalSprayComplexItem::_fenceModelChanged));
 }
@@ -274,23 +272,26 @@ void AgriculturalSprayComplexItem::_sourcePolygonTraceModeChanged(QGCFencePolygo
     }
 
     const QPointer<QGCFencePolygon> sourcePolygon(polygon);
-    QMetaObject::invokeMethod(this, [this, sourcePolygon]() {
-        if (!sourcePolygon || sourcePolygon != _sourcePolygon || sourcePolygon->traceMode()) {
-            return;
-        }
+    QMetaObject::invokeMethod(
+        this,
+        [this, sourcePolygon]() {
+            if (!sourcePolygon || sourcePolygon != _sourcePolygon || sourcePolygon->traceMode()) {
+                return;
+            }
 
-        _fenceInputChanged();
+            _fenceInputChanged();
 
-        if (!sourcePolygon->isValid() || !_missionController) {
-            return;
-        }
+            if (!sourcePolygon->isValid() || !_missionController) {
+                return;
+            }
 
-        if (_missionController->visualItems() && _missionController->visualItems()->indexOf(this) >= 0 &&
-            _missionController->currentPlanViewItem() != this) {
-            _missionController->setCurrentPlanViewSeqNum(sequenceNumber(), true);
-        }
-        _missionController->requestPlanEditLayer(QStringLiteral("missionGroup"));
-    }, Qt::QueuedConnection);
+            if (_missionController->visualItems() && _missionController->visualItems()->indexOf(this) >= 0 &&
+                _missionController->currentPlanViewItem() != this) {
+                _missionController->setCurrentPlanViewSeqNum(sequenceNumber(), true);
+            }
+            _missionController->requestPlanEditLayer(QStringLiteral("missionGroup"));
+        },
+        Qt::QueuedConnection);
 }
 
 void AgriculturalSprayComplexItem::_connectCircleSignals(QGCFenceCircle* circle)
@@ -459,7 +460,8 @@ bool AgriculturalSprayComplexItem::_resolveSourcePolygon(QString& errorText)
         QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(index);
         if (polygon && polygon->inclusion() && polygon->isValid()) {
             qCWarning(AgriculturalSprayComplexItemLog)
-                << "Legacy Agricultural Spray plan has no source polygon reference; using inclusion polygon index:" << index;
+                << "Legacy Agricultural Spray plan has no source polygon reference; using inclusion polygon index:"
+                << index;
             _sourcePolygon = polygon;
             _loadedSourcePolygonIndex = index;
             _sourcePolygonResolved = true;
@@ -485,9 +487,8 @@ void AgriculturalSprayComplexItem::_normalizeDirectionVertexIndex()
         }
         return;
     }
-    const int normalized = _directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count()
-                               ? _directionVertexIndex
-                               : 0;
+    const int normalized =
+        _directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count() ? _directionVertexIndex : 0;
     if (_directionVertexIndex != normalized) {
         _directionVertexIndex = normalized;
         emit directionVertexIndexChanged();
@@ -746,9 +747,8 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
     const AgriculturalSpray::Point nextPoint =
         sourcePoints[(static_cast<std::size_t>(_directionVertexIndex) + 1) % sourcePoints.size()];
     const AgriculturalSpray::Point sweepDirection = nextPoint - entryPoint;
-    if (!std::isfinite(entryPoint.north) || !std::isfinite(entryPoint.east) ||
-        !std::isfinite(sweepDirection.north) || !std::isfinite(sweepDirection.east) ||
-        AgriculturalSpray::length(sweepDirection) <= 1e-6) {
+    if (!std::isfinite(entryPoint.north) || !std::isfinite(entryPoint.east) || !std::isfinite(sweepDirection.north) ||
+        !std::isfinite(sweepDirection.east) || AgriculturalSpray::length(sweepDirection) <= 1e-6) {
         failureStatus = InvalidArea;
         errorText = tr("The selected direction edge has zero length or invalid coordinates.");
         return false;
@@ -859,8 +859,9 @@ void AgriculturalSprayComplexItem::_rebuildQueued()
         if (_loadedFromJson && _sourcePolygonReferencePresent && !_sourcePolygonResolved &&
             !_sourceResolutionRetryPending) {
             _sourceResolutionRetryPending = true;
-            qCDebug(AgriculturalSprayComplexItemLog) << "Deferring source polygon resolution until GeoFence load settles"
-                                                    << "error:" << error;
+            qCDebug(AgriculturalSprayComplexItemLog)
+                << "Deferring source polygon resolution until GeoFence load settles"
+                << "error:" << error;
             _scheduleRebuild();
             return;
         }
@@ -890,9 +891,8 @@ void AgriculturalSprayComplexItem::_startPendingPlanner()
     _runningPlan = std::move(_pendingPlan);
     _pendingPlan.reset();
     AgriculturalSpray::PlannerInput input = _runningPlan->input;
-    _plannerWatcher.setFuture(QtConcurrent::run([input = std::move(input)]() {
-        return AgriculturalSpray::plan(input);
-    }));
+    _plannerWatcher.setFuture(
+        QtConcurrent::run([input = std::move(input)]() { return AgriculturalSpray::plan(input); }));
 }
 
 void AgriculturalSprayComplexItem::_plannerFinished()
@@ -909,9 +909,9 @@ void AgriculturalSprayComplexItem::_plannerFinished()
     if (completedPlan.revision == _plannerRevision) {
         _publishPlannerResult(result, completedPlan.origin);
     } else {
-        qCDebug(AgriculturalSprayComplexItemLog) << "Discarding stale planner result"
-                                                << "completed revision:" << completedPlan.revision
-                                                << "current revision:" << _plannerRevision;
+        qCDebug(AgriculturalSprayComplexItemLog)
+            << "Discarding stale planner result"
+            << "completed revision:" << completedPlan.revision << "current revision:" << _plannerRevision;
     }
     _startPendingPlanner();
 }
@@ -1300,7 +1300,7 @@ bool AgriculturalSprayComplexItem::_validateLoadValue(Fact& fact, const QJsonVal
 }
 
 bool AgriculturalSprayComplexItem::_normalizeLoadedDropletClass(QJsonValue jsonValue, QVariant& typedValue,
-                                                                 QString& errorText)
+                                                                QString& errorText)
 {
     if (!jsonValue.isDouble() || !std::isfinite(jsonValue.toDouble()) ||
         jsonValue.toDouble() != std::floor(jsonValue.toDouble())) {
@@ -1403,8 +1403,9 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
     for (std::size_t index = 0; index < facts.size(); ++index) {
         if (facts[index] == &_dropletClassFact) {
             if (!_normalizeLoadedDropletClass(complexObject[keys[index]], values[index], errorString)) {
-                qCWarning(AgriculturalSprayComplexItemLog) << "JSON Fact validation failed"
-                                                           << "name:" << facts[index]->name() << "error:" << errorString;
+                qCWarning(AgriculturalSprayComplexItemLog)
+                    << "JSON Fact validation failed"
+                    << "name:" << facts[index]->name() << "error:" << errorString;
                 _setStatus(GenerationError, errorString);
                 return false;
             }
