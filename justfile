@@ -9,6 +9,7 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
 # Configuration from build-config.json
 python := env_var_or_default("PYTHON", if os_family() == "windows" { "py" } else { "python3" })
+tools_python := if os_family() == "windows" { ".venv/Scripts/python.exe" } else { ".venv/bin/python" }
 qt_version := shell(python, "./tools/setup/read_config.py", "--get", "qt.version")
 cmake_min_version := shell(python, "./tools/setup/read_config.py", "--get", "build.cmake_minimum_version")
 gstreamer_version := shell(python, "./tools/setup/read_config.py", "--get", "gstreamer.version.default")
@@ -135,6 +136,34 @@ info:
 # Check dependency versions
 check-deps:
     {{python}} ./tools/check_deps.py
+
+# Install the standalone agricultural coverage-planner lab dependencies
+coverage-lab-setup:
+    {{tools_python}} -m pip install --disable-pip-version-check --no-compile --no-deps --only-binary=:all: --requirement ./tools/coverage_lab/requirements.txt
+
+# Run one scenario; the selected field vertex defines direction and the nearest starting swath
+coverage-lab scenario="large_circle" vertex="0" spacing="8" output_dir="build/coverage-lab":
+    {{tools_python}} -m tools.coverage_lab.cli --scenario "{{scenario}}" --field-vertex "{{vertex}}" --spacing "{{spacing}}" --output-dir "{{output_dir}}"
+
+# Run every deterministic coverage-planner scenario using the same field-vertex index
+coverage-lab-all vertex="0" spacing="8" output_dir="build/coverage-lab":
+    {{tools_python}} -m tools.coverage_lab.cli --all --field-vertex "{{vertex}}" --spacing "{{spacing}}" --output-dir "{{output_dir}}"
+
+# Run the focused coverage-planner regression batch
+coverage-lab-test:
+    {{tools_python}} -m pytest ./tools/tests/test_coverage_lab.py -q
+
+# Benchmark planner calculation only; excludes PNG, JSON, and CSV generation
+coverage-lab-benchmark spacing="8" repeats="5" vertex="0":
+    {{tools_python}} -m tools.coverage_lab.benchmark --all --spacing "{{spacing}}" --repeats "{{repeats}}" --field-vertex "{{vertex}}"
+
+# Benchmark one planner scenario without report generation
+coverage-lab-benchmark-one scenario="large_circle" spacing="8" repeats="3" vertex="0":
+    {{tools_python}} -m tools.coverage_lab.benchmark --scenario "{{scenario}}" --spacing "{{spacing}}" --repeats "{{repeats}}" --field-vertex "{{vertex}}"
+
+# Combine the eight default scenarios and alternate large-polygon selection into one PNG
+coverage-lab-contact-sheet default_dir="build/coverage-lab-field-vertex-0-8m" alternate_dir="build/coverage-lab-field-vertex-1-8m" output="build/coverage-lab-all-8m.png":
+    {{tools_python}} -m tools.coverage_lab.contact_sheet --default-dir "{{default_dir}}" --alternate-polygon-dir "{{alternate_dir}}" --output "{{output}}"
 
 # Clean build, caches, and generated files
 distclean:
