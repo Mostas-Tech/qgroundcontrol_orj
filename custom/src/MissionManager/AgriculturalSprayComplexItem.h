@@ -1,5 +1,8 @@
 #pragma once
 
+#include <optional>
+
+#include <QtCore/QFutureWatcher>
 #include <QtCore/QList>
 #include <QtCore/QLoggingCategory>
 #include <QtCore/QMap>
@@ -8,6 +11,7 @@
 #include <QtCore/QString>
 #include <QtPositioning/QGeoCoordinate>
 
+#include "AgriculturalSprayPlanner.h"
 #include "ComplexMissionItem.h"
 #include "Fact.h"
 
@@ -18,11 +22,6 @@ class PlanMasterController;
 class QGCFenceCircle;
 class QGCFencePolygon;
 class QmlObjectListModel;
-
-namespace AgriculturalSpray {
-struct PlannerInput;
-struct PlannerResult;
-}  // namespace AgriculturalSpray
 
 Q_DECLARE_LOGGING_CATEGORY(AgriculturalSprayComplexItemLog)
 
@@ -35,6 +34,13 @@ class AgriculturalSprayComplexItem final : public ComplexMissionItem
     Q_PROPERTY(Fact* lineSpacing READ lineSpacing CONSTANT)
     Q_PROPERTY(Fact* gridAngle READ gridAngle CONSTANT)
     Q_PROPERTY(Fact* entryCorner READ entryCorner CONSTANT)
+    Q_PROPERTY(
+        int directionVertexIndex READ directionVertexIndex WRITE setDirectionVertexIndex NOTIFY directionVertexIndexChanged)
+    Q_PROPERTY(QList<QGeoCoordinate> sourcePolygonCoordinates READ sourcePolygonCoordinates NOTIFY
+                   sourcePolygonCoordinatesChanged)
+    Q_PROPERTY(QGeoCoordinate directionEdgeStart READ directionEdgeStart NOTIFY directionEdgeChanged)
+    Q_PROPERTY(QGeoCoordinate directionEdgeEnd READ directionEdgeEnd NOTIFY directionEdgeChanged)
+    Q_PROPERTY(bool sourcePolygonTraceMode READ sourcePolygonTraceMode NOTIFY sourcePolygonTraceModeChanged)
     Q_PROPERTY(Fact* dropletClass READ dropletClass CONSTANT)
     Q_PROPERTY(Fact* applicationRate READ applicationRate CONSTANT)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
@@ -92,6 +98,16 @@ public:
 
     Fact* entryCorner() { return &_entryCornerFact; }
 
+    int directionVertexIndex() const { return _directionVertexIndex; }
+
+    QList<QGeoCoordinate> sourcePolygonCoordinates() const;
+
+    QGeoCoordinate directionEdgeStart() const;
+
+    QGeoCoordinate directionEdgeEnd() const;
+
+    bool sourcePolygonTraceMode() const;
+
     Fact* dropletClass() { return &_dropletClassFact; }
 
     Fact* applicationRate() { return &_applicationRateFact; }
@@ -109,6 +125,7 @@ public:
     int sprayLegCount() const { return _sprayLegCount; }
 
     Q_INVOKABLE void rebuild();
+    Q_INVOKABLE void setDirectionVertexIndex(int index);
 
     /// Re-snapshots the fully loaded GeoFence without making the mission item dirty.
     void refreshAfterLoad();
@@ -190,6 +207,10 @@ signals:
     void routeCoordinatesChanged();
     void routeSegmentTypesChanged();
     void sprayLegCountChanged();
+    void directionVertexIndexChanged();
+    void sourcePolygonCoordinatesChanged();
+    void directionEdgeChanged();
+    void sourcePolygonTraceModeChanged();
 
 protected:
     bool coordinateTerrainAltitudeQueryEnabled() const final { return false; }
@@ -200,6 +221,7 @@ private slots:
     void _fenceModelChanged();
     void _rebuildQueued();
     void _plannedHomePositionChanged();
+    void _plannerFinished();
 
 private:
     bool _initializeFact(Fact& fact, const char* name);
@@ -225,6 +247,16 @@ private:
     bool _resolveSourcePolygon(QString& errorText);
     int _sourcePolygonIndex() const;
     bool _normalizeLoadedDropletClass(QJsonValue jsonValue, QVariant& typedValue, QString& errorText);
+    void _normalizeDirectionVertexIndex();
+    void _migrateLegacyDirectionSelection();
+    void _startPendingPlanner();
+
+    struct PendingPlan
+    {
+        AgriculturalSpray::PlannerInput input;
+        QGeoCoordinate origin;
+        quint64 revision = 0;
+    };
 
     QMap<QString, FactMetaData*> _metaDataMap;
     Fact _altitudeFact;
@@ -233,6 +265,12 @@ private:
     Fact _entryCornerFact;
     Fact _dropletClassFact;
     Fact _applicationRateFact;
+
+    int _directionVertexIndex = 0;
+    bool _legacyDirectionPending = false;
+    bool _loadedDirectionRequiresValidation = false;
+    double _legacyGridAngleDegrees = 0.0;
+    EntryCorner _legacyEntryCorner = TopLeft;
 
     GeoFenceController* _geoFenceController = nullptr;
     QmlObjectListModel* _polygonModel = nullptr;
@@ -257,7 +295,16 @@ private:
     bool _rebuildPending = false;
     bool _loading = false;
     bool _loadedFromJson = false;
+    bool _postLoadRefreshReceived = false;
+    bool _sourceResolutionRetryPending = false;
 
-    static constexpr int _jsonVersion = 1;
+    QFutureWatcher<AgriculturalSpray::PlannerResult> _plannerWatcher;
+    std::optional<PendingPlan> _pendingPlan;
+    std::optional<PendingPlan> _runningPlan;
+    quint64 _plannerRevision = 0;
+
+    static constexpr int _jsonVersion = 2;
+    static constexpr int _legacyJsonVersion = 1;
     static constexpr const char* _sourcePolygonIndexKey = "sourcePolygonIndex";
+    static constexpr const char* _directionVertexIndexKey = "directionVertexIndex";
 };

@@ -8,7 +8,9 @@ unset(_agricultural_spray_planner_source)
 
 target_sources(
     ${CMAKE_PROJECT_NAME}
-    PRIVATE MissionManager/AgriculturalSprayComplexItemTest.cc
+    PRIVATE MissionManager/AgriculturalSprayBcdPlannerTest.cc
+            MissionManager/AgriculturalSprayBcdPlannerTest.h
+            MissionManager/AgriculturalSprayComplexItemTest.cc
             MissionManager/AgriculturalSprayComplexItemTest.h
             MissionManager/AgriculturalSprayPlanLoadTest.cc
             MissionManager/AgriculturalSprayPlanLoadTest.h
@@ -26,6 +28,7 @@ target_include_directories(${CMAKE_PROJECT_NAME}
 )
 
 add_qgc_test(AgriculturalSprayPlannerTest LABELS Unit MissionManager Custom)
+add_qgc_test(AgriculturalSprayBcdPlannerTest LABELS Unit MissionManager Custom)
 add_qgc_test(AgriculturalSprayComplexItemTest LABELS Unit MissionManager Custom)
 add_qgc_test(AgriculturalSprayPluginTest LABELS Unit MissionManager Custom)
 add_qgc_test(AgriculturalSprayPlanLoadTest LABELS Unit MissionManager Custom)

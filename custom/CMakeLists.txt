@@ -44,6 +44,7 @@ set(CUSTOM_DEFINITIONS
 )
 
 set(CUSTOM_QT_COMPONENTS
+    Concurrent
     Core
     CACHE INTERNAL "" FORCE
 )

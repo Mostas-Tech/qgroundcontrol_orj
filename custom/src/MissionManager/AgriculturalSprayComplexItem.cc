@@ -9,9 +9,12 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <QtConcurrent/QtConcurrentRun>
 
 #include "AgriculturalSprayGeometry.h"
 #include "AgriculturalSprayPlanner.h"
@@ -79,12 +82,70 @@ AgriculturalSprayComplexItem::AgriculturalSprayComplexItem(PlanMasterController*
     }
     connect(_missionController, &MissionController::plannedHomePositionChanged, this,
             &AgriculturalSprayComplexItem::_plannedHomePositionChanged);
+    connect(&_plannerWatcher, &QFutureWatcher<AgriculturalSpray::PlannerResult>::finished, this,
+            &AgriculturalSprayComplexItem::_plannerFinished);
 
     _connectFenceModels();
     _reconnectShapeSignals();
     _setStatus(NoInclusion, QString());
     setDirty(false);
     rebuild();
+}
+
+QList<QGeoCoordinate> AgriculturalSprayComplexItem::sourcePolygonCoordinates() const
+{
+    return _sourcePolygon ? _sourcePolygon->coordinateList() : QList<QGeoCoordinate>{};
+}
+
+QGeoCoordinate AgriculturalSprayComplexItem::directionEdgeStart() const
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    return _directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count()
+               ? coordinates[_directionVertexIndex]
+               : QGeoCoordinate{};
+}
+
+QGeoCoordinate AgriculturalSprayComplexItem::directionEdgeEnd() const
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    return _directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count()
+               ? coordinates[(_directionVertexIndex + 1) % coordinates.count()]
+               : QGeoCoordinate{};
+}
+
+bool AgriculturalSprayComplexItem::sourcePolygonTraceMode() const
+{
+    return _sourcePolygon && _sourcePolygon->traceMode();
+}
+
+void AgriculturalSprayComplexItem::setDirectionVertexIndex(int index)
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    if (index < 0 || index >= coordinates.count()) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Direction vertex index is outside the source polygon"
+                                                   << "index:" << index << "count:" << coordinates.count();
+        return;
+    }
+    const QGeoCoordinate& start = coordinates[index];
+    const QGeoCoordinate& end = coordinates[(index + 1) % coordinates.count()];
+    if (!finiteCoordinate(start) || !finiteCoordinate(end) || start.distanceTo(end) <= 1e-6) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Direction vertex starts an invalid source polygon edge"
+                                                   << "index:" << index;
+        return;
+    }
+    if (_directionVertexIndex == index) {
+        return;
+    }
+    _directionVertexIndex = index;
+    _legacyDirectionPending = false;
+    _loadedDirectionRequiresValidation = false;
+    emit directionVertexIndexChanged();
+    emit directionEdgeChanged();
+    if (!_loading) {
+        setDirty(true);
+        _invalidateRoute();
+        _scheduleRebuild();
+    }
 }
 
 bool AgriculturalSprayComplexItem::_initializeFact(Fact& fact, const char* name)
@@ -205,6 +266,9 @@ void AgriculturalSprayComplexItem::_connectPolygonSignals(QGCFencePolygon* polyg
 
 void AgriculturalSprayComplexItem::_sourcePolygonTraceModeChanged(QGCFencePolygon* polygon, bool traceMode)
 {
+    if (polygon == _sourcePolygon) {
+        emit sourcePolygonTraceModeChanged();
+    }
     if (traceMode || polygon != _sourcePolygon) {
         return;
     }
@@ -264,6 +328,9 @@ void AgriculturalSprayComplexItem::_fenceInputChanged()
         return;
     }
 
+    _normalizeDirectionVertexIndex();
+    emit sourcePolygonCoordinatesChanged();
+    emit directionEdgeChanged();
     _invalidateRoute();
     _scheduleRebuild();
 }
@@ -271,6 +338,9 @@ void AgriculturalSprayComplexItem::_fenceInputChanged()
 void AgriculturalSprayComplexItem::_fenceModelChanged()
 {
     _shapeConnectionsDirty = true;
+    emit sourcePolygonCoordinatesChanged();
+    emit directionEdgeChanged();
+    emit sourcePolygonTraceModeChanged();
     _fenceInputChanged();
 }
 
@@ -283,6 +353,7 @@ void AgriculturalSprayComplexItem::rebuild()
 void AgriculturalSprayComplexItem::refreshAfterLoad()
 {
     _loading = false;
+    _postLoadRefreshReceived = true;
     _shapeConnectionsDirty = true;
     _invalidateRoute();
     _scheduleRebuild();
@@ -400,6 +471,97 @@ bool AgriculturalSprayComplexItem::_resolveSourcePolygon(QString& errorText)
     return false;
 }
 
+void AgriculturalSprayComplexItem::_normalizeDirectionVertexIndex()
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    // During plan loading the mission item can arrive before the GeoFence model. Preserve the
+    // serialized selection until the referenced polygon has actually been resolved.
+    if (coordinates.isEmpty()) {
+        return;
+    }
+    if (_loadedDirectionRequiresValidation) {
+        if (_directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count()) {
+            _loadedDirectionRequiresValidation = false;
+        }
+        return;
+    }
+    const int normalized = _directionVertexIndex >= 0 && _directionVertexIndex < coordinates.count()
+                               ? _directionVertexIndex
+                               : 0;
+    if (_directionVertexIndex != normalized) {
+        _directionVertexIndex = normalized;
+        emit directionVertexIndexChanged();
+        emit directionEdgeChanged();
+    }
+}
+
+void AgriculturalSprayComplexItem::_migrateLegacyDirectionSelection()
+{
+    if (!_legacyDirectionPending || !_sourcePolygon || !_sourcePolygon->isValid()) {
+        return;
+    }
+    const QList<QGeoCoordinate> coordinates = _sourcePolygon->coordinateList();
+    if (coordinates.count() < 3) {
+        return;
+    }
+    const QGeoCoordinate origin = horizontalCoordinate(coordinates.front());
+    std::vector<AgriculturalSpray::Point> points;
+    points.reserve(static_cast<std::size_t>(coordinates.count()));
+    for (const QGeoCoordinate& coordinate : coordinates) {
+        double north = std::numeric_limits<double>::quiet_NaN();
+        double east = std::numeric_limits<double>::quiet_NaN();
+        double down = std::numeric_limits<double>::quiet_NaN();
+        QGCGeo::convertGeoToNed(horizontalCoordinate(coordinate), origin, north, east, down);
+        points.push_back({north, east});
+    }
+    const double radians = _legacyGridAngleDegrees * std::numbers::pi / 180.0;
+    const AgriculturalSpray::Point direction{std::cos(radians), std::sin(radians)};
+    const AgriculturalSpray::Point normal{-direction.east, direction.north};
+    double minimumAlong = std::numeric_limits<double>::infinity();
+    double maximumAlong = -std::numeric_limits<double>::infinity();
+    double minimumAcross = std::numeric_limits<double>::infinity();
+    double maximumAcross = -std::numeric_limits<double>::infinity();
+    for (const AgriculturalSpray::Point& point : points) {
+        minimumAlong = std::min(minimumAlong, AgriculturalSpray::dot(point, direction));
+        maximumAlong = std::max(maximumAlong, AgriculturalSpray::dot(point, direction));
+        minimumAcross = std::min(minimumAcross, AgriculturalSpray::dot(point, normal));
+        maximumAcross = std::max(maximumAcross, AgriculturalSpray::dot(point, normal));
+    }
+    const bool top = _legacyEntryCorner == TopLeft || _legacyEntryCorner == TopRight;
+    const bool left = _legacyEntryCorner == TopLeft || _legacyEntryCorner == BottomLeft;
+    const double targetAlong = top ? maximumAlong : minimumAlong;
+    const double targetAcross = left ? minimumAcross : maximumAcross;
+    double bestAngle = std::numeric_limits<double>::infinity();
+    double bestCornerDistance = std::numeric_limits<double>::infinity();
+    int bestIndex = 0;
+    for (int index = 0; index < static_cast<int>(points.size()); ++index) {
+        const AgriculturalSpray::Point edge = points[(index + 1) % points.size()] - points[index];
+        const double edgeLength = AgriculturalSpray::length(edge);
+        if (edgeLength <= 1e-9) {
+            continue;
+        }
+        const double alignment = std::clamp(std::abs(AgriculturalSpray::dot(edge, direction) / edgeLength), 0.0, 1.0);
+        const double angle = std::acos(alignment);
+        const double along = AgriculturalSpray::dot(points[index], direction);
+        const double across = AgriculturalSpray::dot(points[index], normal);
+        const double cornerDistance = std::hypot(along - targetAlong, across - targetAcross);
+        if (angle + 1e-12 < bestAngle ||
+            (std::abs(angle - bestAngle) <= 1e-12 &&
+             (cornerDistance + 1e-9 < bestCornerDistance ||
+              (std::abs(cornerDistance - bestCornerDistance) <= 1e-9 && index < bestIndex)))) {
+            bestAngle = angle;
+            bestCornerDistance = cornerDistance;
+            bestIndex = index;
+        }
+    }
+    _legacyDirectionPending = false;
+    if (_directionVertexIndex != bestIndex) {
+        _directionVertexIndex = bestIndex;
+        emit directionVertexIndexChanged();
+        emit directionEdgeChanged();
+    }
+}
+
 void AgriculturalSprayComplexItem::_scheduleRebuild()
 {
     if (_rebuildPending) {
@@ -412,6 +574,7 @@ void AgriculturalSprayComplexItem::_scheduleRebuild()
 
 void AgriculturalSprayComplexItem::_invalidateRoute()
 {
+    ++_plannerRevision;
     const bool wasReady = readyForSaveState() == ReadyForSave;
     const int previousLastSequenceNumber = lastSequenceNumber();
 
@@ -572,6 +735,27 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
     const std::vector<AgriculturalSpray::Point> sourcePoints = sourcePolygon.vertices;
     input.inclusions.emplace_back(std::move(sourcePolygon));
 
+    _migrateLegacyDirectionSelection();
+    _normalizeDirectionVertexIndex();
+    if (_directionVertexIndex < 0 || _directionVertexIndex >= static_cast<int>(sourcePoints.size())) {
+        failureStatus = InvalidArea;
+        errorText = tr("The selected direction vertex is outside the spray polygon.");
+        return false;
+    }
+    const AgriculturalSpray::Point entryPoint = sourcePoints[static_cast<std::size_t>(_directionVertexIndex)];
+    const AgriculturalSpray::Point nextPoint =
+        sourcePoints[(static_cast<std::size_t>(_directionVertexIndex) + 1) % sourcePoints.size()];
+    const AgriculturalSpray::Point sweepDirection = nextPoint - entryPoint;
+    if (!std::isfinite(entryPoint.north) || !std::isfinite(entryPoint.east) ||
+        !std::isfinite(sweepDirection.north) || !std::isfinite(sweepDirection.east) ||
+        AgriculturalSpray::length(sweepDirection) <= 1e-6) {
+        failureStatus = InvalidArea;
+        errorText = tr("The selected direction edge has zero length or invalid coordinates.");
+        return false;
+    }
+    input.entryPoint = entryPoint;
+    input.sweepDirection = sweepDirection;
+
     for (int index = 0; index < _polygonModel->count(); ++index) {
         const QGCFencePolygon* const fencePolygon = qobject_cast<const QGCFencePolygon*>((*_polygonModel)[index]);
         if (!fencePolygon) {
@@ -671,7 +855,17 @@ void AgriculturalSprayComplexItem::_rebuildQueued()
     Status failureStatus = GenerationError;
     QString error;
     if (!_snapshotPlannerInput(input, origin, failureStatus, error)) {
-        if (failureStatus == NoInclusion) {
+        _pendingPlan.reset();
+        if (_loadedFromJson && _sourcePolygonReferencePresent && !_sourcePolygonResolved &&
+            !_sourceResolutionRetryPending) {
+            _sourceResolutionRetryPending = true;
+            qCDebug(AgriculturalSprayComplexItemLog) << "Deferring source polygon resolution until GeoFence load settles"
+                                                    << "error:" << error;
+            _scheduleRebuild();
+            return;
+        }
+        _sourceResolutionRetryPending = false;
+        if (failureStatus == NoInclusion || (_loadedFromJson && !_postLoadRefreshReceived)) {
             qCDebug(AgriculturalSprayComplexItemLog) << error;
         } else {
             qCWarning(AgriculturalSprayComplexItemLog) << "Route input snapshot failed"
@@ -680,10 +874,46 @@ void AgriculturalSprayComplexItem::_rebuildQueued()
         _setStatus(failureStatus, error);
         return;
     }
+    _sourceResolutionRetryPending = false;
 
     _setStatus(Generating, QString());
-    const AgriculturalSpray::PlannerResult result = AgriculturalSpray::plan(input);
-    _publishPlannerResult(result, origin);
+    _pendingPlan = PendingPlan{.input = std::move(input), .origin = origin, .revision = _plannerRevision};
+    _startPendingPlanner();
+}
+
+void AgriculturalSprayComplexItem::_startPendingPlanner()
+{
+    if (!_pendingPlan || _plannerWatcher.isRunning()) {
+        return;
+    }
+
+    _runningPlan = std::move(_pendingPlan);
+    _pendingPlan.reset();
+    AgriculturalSpray::PlannerInput input = _runningPlan->input;
+    _plannerWatcher.setFuture(QtConcurrent::run([input = std::move(input)]() {
+        return AgriculturalSpray::plan(input);
+    }));
+}
+
+void AgriculturalSprayComplexItem::_plannerFinished()
+{
+    if (!_runningPlan) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Planner completed without a running request snapshot";
+        _startPendingPlanner();
+        return;
+    }
+
+    const AgriculturalSpray::PlannerResult result = _plannerWatcher.result();
+    const PendingPlan completedPlan = std::move(*_runningPlan);
+    _runningPlan.reset();
+    if (completedPlan.revision == _plannerRevision) {
+        _publishPlannerResult(result, completedPlan.origin);
+    } else {
+        qCDebug(AgriculturalSprayComplexItemLog) << "Discarding stale planner result"
+                                                << "completed revision:" << completedPlan.revision
+                                                << "current revision:" << _plannerRevision;
+    }
+    _startPendingPlanner();
 }
 
 void AgriculturalSprayComplexItem::_publishPlannerResult(const AgriculturalSpray::PlannerResult& result,
@@ -1039,8 +1269,7 @@ void AgriculturalSprayComplexItem::save(QJsonArray& missionItems)
     saveObject[ComplexMissionItem::jsonComplexItemTypeKey] = jsonComplexItemTypeValue;
     saveObject[altitudeName] = _altitudeFact.rawValue().toDouble();
     saveObject[lineSpacingName] = _lineSpacingFact.rawValue().toDouble();
-    saveObject[gridAngleName] = _gridAngleFact.rawValue().toDouble();
-    saveObject[entryCornerName] = static_cast<int>(_entryCornerFact.rawValue().toUInt());
+    saveObject[_directionVertexIndexKey] = _directionVertexIndex;
     saveObject[dropletClassName] = static_cast<int>(_dropletClassFact.rawValue().toUInt());
     saveObject[applicationRateName] = _applicationRateFact.rawValue().toDouble();
     saveObject[_sourcePolygonIndexKey] = sourcePolygonIndex;
@@ -1103,29 +1332,41 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
 {
     _invalidateRoute();
 
-    const QList<JsonParsing::KeyValidateInfo> keyInfoList = {
+    const QJsonValue versionValue = complexObject[JsonParsing::jsonVersionKey];
+    if (!versionValue.isDouble() || !std::isfinite(versionValue.toDouble()) ||
+        versionValue.toDouble() != std::floor(versionValue.toDouble())) {
+        errorString = tr("Agricultural Spray version must be an integer.");
+        _setStatus(GenerationError, errorString);
+        return false;
+    }
+    const int version = versionValue.toInt();
+    if (version != _legacyJsonVersion && version != _jsonVersion) {
+        errorString = tr("Agricultural Spray version %1 is not supported.").arg(version);
+        qCWarning(AgriculturalSprayComplexItemLog) << errorString;
+        _setStatus(GenerationError, errorString);
+        return false;
+    }
+
+    QList<JsonParsing::KeyValidateInfo> keyInfoList = {
         {JsonParsing::jsonVersionKey, QJsonValue::Double, true},
         {VisualMissionItem::jsonTypeKey, QJsonValue::String, true},
         {ComplexMissionItem::jsonComplexItemTypeKey, QJsonValue::String, true},
         {altitudeName, QJsonValue::Double, true},
         {lineSpacingName, QJsonValue::Double, true},
-        {gridAngleName, QJsonValue::Double, true},
-        {entryCornerName, QJsonValue::Double, true},
         {dropletClassName, QJsonValue::Double, true},
         {applicationRateName, QJsonValue::Double, true},
-        {_sourcePolygonIndexKey, QJsonValue::Double, false},
+        {_sourcePolygonIndexKey, QJsonValue::Double, version == _jsonVersion},
     };
+    if (version == _legacyJsonVersion) {
+        keyInfoList.append({gridAngleName, QJsonValue::Double, true});
+        keyInfoList.append({entryCornerName, QJsonValue::Double, true});
+    } else {
+        keyInfoList.append({_directionVertexIndexKey, QJsonValue::Double, true});
+    }
 
     if (!JsonParsing::validateKeysStrict(complexObject, keyInfoList, errorString)) {
         qCWarning(AgriculturalSprayComplexItemLog) << "JSON validation failed"
                                                    << "error:" << errorString;
-        _setStatus(GenerationError, errorString);
-        return false;
-    }
-    if (complexObject[JsonParsing::jsonVersionKey].toDouble() != static_cast<double>(_jsonVersion)) {
-        errorString = tr("Agricultural Spray version %1 is not supported.")
-                          .arg(complexObject[JsonParsing::jsonVersionKey].toDouble());
-        qCWarning(AgriculturalSprayComplexItemLog) << errorString;
         _setStatus(GenerationError, errorString);
         return false;
     }
@@ -1145,14 +1386,19 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         return false;
     }
 
-    const std::array<Fact*, 6> facts = {
-        &_altitudeFact,    &_lineSpacingFact,  &_gridAngleFact,
-        &_entryCornerFact, &_dropletClassFact, &_applicationRateFact,
+    const std::array<Fact*, 4> facts = {
+        &_altitudeFact,
+        &_lineSpacingFact,
+        &_dropletClassFact,
+        &_applicationRateFact,
     };
-    const std::array<const char*, 6> keys = {
-        altitudeName, lineSpacingName, gridAngleName, entryCornerName, dropletClassName, applicationRateName,
+    const std::array<const char*, 4> keys = {
+        altitudeName,
+        lineSpacingName,
+        dropletClassName,
+        applicationRateName,
     };
-    std::array<QVariant, 6> values;
+    std::array<QVariant, 4> values;
 
     for (std::size_t index = 0; index < facts.size(); ++index) {
         if (facts[index] == &_dropletClassFact) {
@@ -1172,8 +1418,38 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         }
     }
 
+    QVariant legacyGridAngle;
+    QVariant legacyEntryCorner;
+    int loadedDirectionVertexIndex = 0;
+    if (version == _legacyJsonVersion) {
+        if (!_validateLoadValue(_gridAngleFact, complexObject[gridAngleName], legacyGridAngle, errorString) ||
+            !_validateLoadValue(_entryCornerFact, complexObject[entryCornerName], legacyEntryCorner, errorString)) {
+            qCWarning(AgriculturalSprayComplexItemLog) << "Legacy direction validation failed"
+                                                       << "error:" << errorString;
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        const uint entryCornerValue = legacyEntryCorner.toUInt();
+        if (entryCornerValue > static_cast<uint>(BottomRight)) {
+            errorString = tr("Entry corner is outside the supported range.");
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+    } else {
+        const double directionIndexValue = complexObject[_directionVertexIndexKey].toDouble();
+        if (!std::isfinite(directionIndexValue) || directionIndexValue != std::floor(directionIndexValue) ||
+            directionIndexValue < 0.0 || directionIndexValue > static_cast<double>(std::numeric_limits<int>::max())) {
+            errorString = tr("Direction vertex index must be a non-negative integer.");
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        loadedDirectionVertexIndex = static_cast<int>(directionIndexValue);
+    }
+
     _sourcePolygon.clear();
     _loadedFromJson = true;
+    _postLoadRefreshReceived = false;
+    _sourceResolutionRetryPending = false;
     _sourcePolygonReferencePresent = complexObject.contains(_sourcePolygonIndexKey);
     _loadedSourcePolygonIndex = -1;
     _sourcePolygonResolved = false;
@@ -1194,9 +1470,27 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
     for (std::size_t index = 0; index < facts.size(); ++index) {
         facts[index]->setRawValue(values[index]);
     }
+    if (version == _legacyJsonVersion) {
+        _gridAngleFact.setRawValue(legacyGridAngle);
+        _entryCornerFact.setRawValue(legacyEntryCorner);
+        _legacyGridAngleDegrees = legacyGridAngle.toDouble();
+        _legacyEntryCorner = static_cast<EntryCorner>(legacyEntryCorner.toUInt());
+        _legacyDirectionPending = true;
+        _loadedDirectionRequiresValidation = false;
+        _directionVertexIndex = 0;
+    } else {
+        _legacyDirectionPending = false;
+        _loadedDirectionRequiresValidation = true;
+        _directionVertexIndex = loadedDirectionVertexIndex;
+    }
+    emit directionVertexIndexChanged();
+    emit directionEdgeChanged();
     _loading = false;
 
     setSequenceNumber(sequenceNumber);
-    refreshAfterLoad();
+    _shapeConnectionsDirty = true;
+    _invalidateRoute();
+    _scheduleRebuild();
+    setDirty(false);
     return true;
 }
