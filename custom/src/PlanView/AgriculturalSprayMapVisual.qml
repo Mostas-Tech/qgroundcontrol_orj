@@ -34,7 +34,7 @@ Item {
                                                : []
     readonly property color sprayLegColor: qgcPal.colorGreen
     readonly property color transitSegmentColor: qgcPal.colorOrange
-    readonly property color nonSprayAreaColor: qgcPal.colorRed
+    readonly property color nonSprayAreaColor: "white"
     readonly property real sprayLegWidthMultiplier: 0.5
     readonly property real transitSegmentWidthMultiplier: 0.4
     readonly property real sprayLegLineWidth: ScreenTools.defaultFontPixelWidth * sprayLegWidthMultiplier

@@ -154,7 +154,7 @@ void AgriculturalSprayPlanViewUITest::_routeVisualStyleProperties()
     QGCPalette palette;
     QCOMPARE(visual->property("sprayLegColor").value<QColor>(), palette.colorGreen());
     QCOMPARE(visual->property("transitSegmentColor").value<QColor>(), palette.colorOrange());
-    QCOMPARE(visual->property("nonSprayAreaColor").value<QColor>(), palette.colorRed());
+    QCOMPARE(visual->property("nonSprayAreaColor").value<QColor>(), QColor(QStringLiteral("white")));
     QCOMPARE(visual->property("sprayLegWidthMultiplier").toDouble(), 0.5);
     QCOMPARE(visual->property("transitSegmentWidthMultiplier").toDouble(), 0.4);
 }
