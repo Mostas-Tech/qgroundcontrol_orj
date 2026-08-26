@@ -83,6 +83,28 @@ Item {
         id: objectManager
     }
 
+    MouseArea {
+        id: fieldTraceMouseArea
+
+        parent: map
+        x: 0
+        y: 0
+        width: map ? map.width : 0
+        height: map ? map.height : 0
+        enabled: _root.interactive && _root._selectedField && _root._selectedField.polygon.traceMode
+        visible: enabled
+        preventStealing: true
+        acceptedButtons: Qt.LeftButton
+        z: QGroundControl.zOrderMapItems + 10
+
+        onClicked: (mouse) => {
+            if (_root._selectedField && _root._selectedField.polygon.traceMode) {
+                _root._selectedField.polygon.appendVertex(
+                            map.toCoordinate(Qt.point(mouse.x, mouse.y), false /* clipToViewPort */))
+            }
+        }
+    }
+
     Component {
         id: routeViewComponent
 
@@ -285,6 +307,7 @@ Item {
                 mapControl: _root.map
                 mapPolygon: modelData.polygon
                 interactive: _root.interactive && index === _root._missionItem.selectedFieldIndex
+                              && !modelData.polygon.traceMode
                 borderWidth: Math.max(1, ScreenTools.defaultFontPixelWidth * 0.35)
                 borderColor: index === _root._missionItem.selectedFieldIndex ? qgcPal.colorGreen : qgcPal.colorBlue
                 interiorColor: qgcPal.colorBlue
