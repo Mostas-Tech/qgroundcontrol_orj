@@ -17,6 +17,7 @@ Rectangle {
     readonly property real _radius:            ScreenTools.defaultFontPixelWidth / 2
     readonly property bool _noInclusion:       missionItem.status === 0
     readonly property bool _routeReady:        missionItem.specifiesCoordinate
+    readonly property var _selectedField:      missionItem.selectedField
 
     function setNonSprayPolygonInteractive(selectedPolygon, interactive) {
         for (let index = 0; index < missionItem.nonSprayPolygons.count; index++) {
@@ -52,6 +53,77 @@ Rectangle {
             wrapMode:               Text.WordWrap
             horizontalAlignment:    Text.AlignHCenter
             color:                  _root._routeReady ? qgcPal.text : qgcPal.warningText
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            QGCLabel { text: qsTr("Fields") }
+            QGCComboBox {
+                objectName: "agriculturalSprayFieldSelector"
+                Layout.fillWidth: true
+                model: _root.missionItem.fieldRows
+                textRole: "name"
+                currentIndex: _root.missionItem.selectedFieldRow
+                onActivated: _root.missionItem.setSelectedFieldIndex(_root.missionItem.fieldRows[index].index)
+            }
+            QGCTextField {
+                id: fieldNameField
+                Layout.preferredWidth: _root._fieldWidth
+                text: _root.missionItem.selectedFieldRow >= 0
+                      ? _root.missionItem.fieldRows[_root.missionItem.selectedFieldRow].name
+                      : ""
+                onEditingFinished: _root.missionItem.renameField(_root.missionItem.selectedFieldIndex, text)
+            }
+            QGCButton {
+                text: qsTr("Up")
+                enabled: _root.missionItem.selectedFieldRow > 0
+                onClicked: {
+                    const row = _root.missionItem.selectedFieldRow
+                    _root.missionItem.moveField(_root.missionItem.fieldRows[row].index,
+                                                _root.missionItem.fieldRows[row - 1].index)
+                }
+            }
+            QGCButton {
+                text: qsTr("Down")
+                enabled: _root.missionItem.selectedFieldRow >= 0
+                         && _root.missionItem.selectedFieldRow < _root.missionItem.fieldRows.length - 1
+                onClicked: {
+                    const row = _root.missionItem.selectedFieldRow
+                    _root.missionItem.moveField(_root.missionItem.fieldRows[row].index,
+                                                _root.missionItem.fieldRows[row + 1].index)
+                }
+            }
+            QGCButton {
+                text: qsTr("Add")
+                onClicked: _root.missionItem.addField()
+            }
+            QGCButton {
+                text: qsTr("Delete")
+                enabled: _root.missionItem.fieldRows.length > 1
+                onClicked: _root.missionItem.removeField(_root.missionItem.selectedFieldIndex)
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: _root.missionItem.selectedFieldRow >= 0
+                     && _root.missionItem.selectedFieldRow < _root.missionItem.fieldRows.length - 1
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: _root._selectedField && _root._selectedField.transitPolyline.traceMode
+                      ? qsTr("Finish transit") : qsTr("Add transit waypoint")
+                onClicked: {
+                    if (_root._selectedField) {
+                        _root._selectedField.transitPolyline.traceMode = !_root._selectedField.transitPolyline.traceMode
+                    }
+                }
+            }
+            QGCButton {
+                text: qsTr("Clear")
+                enabled: _root._selectedField && !_root._selectedField.transitPolyline.empty
+                onClicked: _root._selectedField.transitPolyline.clear()
+            }
         }
 
         QGCLabel {
@@ -90,7 +162,7 @@ Rectangle {
                 objectName:             "agriculturalSprayAltitudeField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.altitude
+                fact:                   _root._selectedField ? _root._selectedField.altitude : null
             }
 
             QGCLabel { text: qsTr("Line spacing") }
@@ -98,7 +170,7 @@ Rectangle {
                 objectName:             "agriculturalSprayLineSpacingField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.lineSpacing
+                fact:                   _root._selectedField ? _root._selectedField.lineSpacing : null
             }
 
             QGCLabel { text: qsTr("Boundary margin") }
@@ -106,7 +178,7 @@ Rectangle {
                 objectName:             "agriculturalSprayBoundaryMarginField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.boundaryMargin
+                fact:                   _root._selectedField ? _root._selectedField.boundaryMargin : null
             }
 
             QGCLabel { text: qsTr("Margin scope") }
@@ -114,7 +186,7 @@ Rectangle {
                 objectName:             "agriculturalSprayBoundaryMarginScopeCombo"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.boundaryMarginScope
+                fact:                   _root._selectedField ? _root._selectedField.boundaryMarginScope : null
                 indexModel:             false
             }
 
@@ -175,7 +247,7 @@ Rectangle {
                 objectName:             "agriculturalSprayDropletClassCombo"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.dropletClass
+                fact:                   _root._selectedField ? _root._selectedField.dropletClass : null
                 indexModel:             false
             }
 
@@ -184,7 +256,7 @@ Rectangle {
                 objectName:             "agriculturalSprayApplicationRateField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.applicationRate
+                fact:                   _root._selectedField ? _root._selectedField.applicationRate : null
             }
         }
 
