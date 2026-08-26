@@ -22,6 +22,16 @@ Item {
     readonly property bool _showDirectionSelection: interactive && _missionItem
                                                     && !_missionItem.sourcePolygonTraceMode
                                                     && _missionItem.sourcePolygonCoordinates.length > 2
+    readonly property bool _showMarginEdge: !!(_missionItem && _missionItem.boundaryMargin
+                                               && _missionItem.boundaryMarginScope
+                                               && _missionItem.sourcePolygonCoordinates.length > 2
+                                               && _missionItem.boundaryMargin.rawValue > 0
+                                               && _missionItem.boundaryMarginScope.rawValue === 0)
+    readonly property bool _showMarginSelection: interactive && _showMarginEdge
+                                                  && !_missionItem.sourcePolygonTraceMode
+    readonly property var _marginEdgeIndices: _missionItem && _missionItem.marginEdgeIndices
+                                               ? _missionItem.marginEdgeIndices
+                                               : []
     readonly property color sprayLegColor: qgcPal.colorGreen
     readonly property color transitSegmentColor: qgcPal.colorOrange
     readonly property real sprayLegWidthMultiplier: 0.5
@@ -87,6 +97,26 @@ Item {
                 z:          QGroundControl.zOrderMapItems + 1
             }
 
+            MapItemView {
+                model: _root._marginEdgeIndices
+
+                delegate: MapPolyline {
+                    required property int modelData
+
+                    readonly property var _coordinates: _root._missionItem.sourcePolygonCoordinates
+
+                    objectName: "agriculturalSprayMarginEdge_" + modelData
+                    path:       _coordinates.length > modelData
+                                ? [_coordinates[modelData], _coordinates[(modelData + 1) % _coordinates.length]]
+                                : []
+                    line.color: qgcPal.colorYellow
+                    line.width: ScreenTools.defaultFontPixelWidth
+                    visible:    _root._showMarginEdge && path.length === 2 && path[0].isValid && path[1].isValid
+                    opacity:    _root.opacity
+                    z:          QGroundControl.zOrderMapItems + 2
+                }
+            }
+
             MapLineArrow {
                 objectName:    "agriculturalSprayDirectionArrow"
                 fromCoord:     _root._missionItem.directionEdgeStart
@@ -129,6 +159,55 @@ Item {
                         MouseArea {
                             anchors.fill: parent
                             onClicked: _root._missionItem.setDirectionVertexIndex(directionVertexMarker.index)
+                        }
+                    }
+                }
+            }
+
+            MapItemView {
+                model: _root._missionItem ? _root._missionItem.sourcePolygonCoordinates : []
+
+                delegate: MapQuickItem {
+                    id: marginEdgeMarker
+
+                    required property var modelData
+                    required property int index
+                    readonly property var _coordinates: _root._missionItem.sourcePolygonCoordinates
+                    readonly property var _nextCoordinate: _coordinates.length > 0
+                                                               ? _coordinates[(index + 1) % _coordinates.length]
+                                                               : QtPositioning.coordinate()
+                    readonly property bool selected: _root._marginEdgeIndices.indexOf(index) >= 0
+
+                    objectName: "agriculturalSprayMarginEdgeMarker_" + index
+                    coordinate: modelData && modelData.isValid && _nextCoordinate.isValid
+                                    ? modelData.atDistanceAndAzimuth(modelData.distanceTo(_nextCoordinate) / 2,
+                                                                     modelData.azimuthTo(_nextCoordinate))
+                                    : QtPositioning.coordinate()
+                    visible:    _root._showMarginSelection && coordinate.isValid
+                    opacity:    _root.opacity
+                    z:          QGroundControl.zOrderMapItems + 4
+                    anchorPoint.x: sourceItem.width / 2
+                    anchorPoint.y: sourceItem.height / 2
+
+                    sourceItem: Item {
+                        width:  ScreenTools.defaultFontPixelHeight * 2.25
+                        height: width
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width:            marginEdgeMarker.selected ? ScreenTools.defaultFontPixelHeight
+                                                                        : ScreenTools.defaultFontPixelHeight * 0.8
+                            height:           width
+                            radius:           width / 2
+                            color:            marginEdgeMarker.selected ? qgcPal.colorYellow
+                                                                        : qgcPal.mapWidgetBorderLight
+                            border.color:     qgcPal.text
+                            border.width:     Math.max(1, ScreenTools.defaultFontPixelWidth * 0.15)
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: _root._missionItem.toggleMarginEdgeIndex(marginEdgeMarker.index)
                         }
                     }
                 }

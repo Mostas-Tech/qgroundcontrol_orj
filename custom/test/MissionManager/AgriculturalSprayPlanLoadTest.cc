@@ -65,7 +65,15 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     QCOMPARE_TRUE_WAIT(created->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
     QCOMPARE(created->directionVertexIndex(), 2);
     QCOMPARE(created->sourcePolygonCoordinates().count(), 4);
-    QVERIFY(created->routeCoordinates().front().distanceTo(created->sourcePolygonCoordinates().at(2)) < 0.05);
+    const QGeoCoordinate createdEntry = created->routeCoordinates().front();
+    const double createdSelectedCornerDistance = createdEntry.distanceTo(created->sourcePolygonCoordinates().at(2));
+    QVERIFY(createdSelectedCornerDistance >= created->boundaryMargin()->rawValue().toDouble());
+    for (int index = 0; index < created->sourcePolygonCoordinates().count(); ++index) {
+        if (index != 2) {
+            QVERIFY(createdSelectedCornerDistance <
+                    createdEntry.distanceTo(created->sourcePolygonCoordinates().at(index)));
+        }
+    }
 
     const QJsonObject mission =
         planController()->saveToJson().object().value(PlanMasterController::kJsonMissionObjectKey).toObject();
@@ -80,8 +88,18 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     }
     QVERIFY(sourcePolygonIndex >= 0);
     QVERIFY(items.at(0).toObject().value(QStringLiteral("sourcePolygonIndex")).toInt() >= 0);
-    QCOMPARE(items.at(0).toObject().value(QStringLiteral("version")).toInt(), 2);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("version")).toInt(), 6);
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("directionVertexIndex")).toInt(), 2);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("BoundaryMargin")).toDouble(), 1.0);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("BoundaryMarginScope")).toInt(), 1);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("marginEdgeIndex")).toInt(), 0);
+    const QJsonArray savedMarginEdges = items.at(0).toObject().value(QStringLiteral("marginEdgeIndices")).toArray();
+    QCOMPARE(savedMarginEdges.size(), 1);
+    QCOMPARE(savedMarginEdges.at(0).toInt(), 0);
+    const QJsonArray savedMarginValues = items.at(0).toObject().value(QStringLiteral("marginEdgeMargins")).toArray();
+    QCOMPARE(savedMarginValues.size(), 1);
+    QCOMPARE(savedMarginValues.at(0).toDouble(), 1.0);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("exclusionMargins")).toArray().size(), 0);
     QVERIFY(!items.at(0).toObject().contains(QStringLiteral("GridAngle")));
     QVERIFY(!items.at(0).toObject().contains(QStringLiteral("EntryCorner")));
 
@@ -107,7 +125,15 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     QVERIFY(loaded->complexDistance() > 0.0);
     QCOMPARE(loaded->directionVertexIndex(), 2);
     QCOMPARE(loaded->sourcePolygonCoordinates().count(), 4);
-    QVERIFY(loaded->routeCoordinates().front().distanceTo(loaded->sourcePolygonCoordinates().at(2)) < 0.05);
+    const QGeoCoordinate loadedEntry = loaded->routeCoordinates().front();
+    const double loadedSelectedCornerDistance = loadedEntry.distanceTo(loaded->sourcePolygonCoordinates().at(2));
+    QVERIFY(loadedSelectedCornerDistance >= loaded->boundaryMargin()->rawValue().toDouble());
+    for (int index = 0; index < loaded->sourcePolygonCoordinates().count(); ++index) {
+        if (index != 2) {
+            QVERIFY(loadedSelectedCornerDistance <
+                    loadedEntry.distanceTo(loaded->sourcePolygonCoordinates().at(index)));
+        }
+    }
 
     QJsonObject invalidItem = items.at(0).toObject();
     invalidItem[QStringLiteral("directionVertexIndex")] = 99;

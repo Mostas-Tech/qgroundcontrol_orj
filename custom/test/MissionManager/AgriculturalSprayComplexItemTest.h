@@ -14,6 +14,12 @@ private slots:
     void init() final;
     void cleanup() final;
     void directionVertexDefaultsToZero();
+    void marginEdgeSelectionIsIndependentAndNormalizes();
+    void boundaryMarginJsonRoundTripAndMigration();
+    void boundaryMarginJsonIsStrict();
+    void exclusionMarginJsonRoundTripAndMigration();
+    void exclusionCircleMarginOverflowFailsClosed();
+    void exclusionMarginOutsideFenceChangesRoute();
     void rapidDirectionChangesPublishLatestRoute();
 
 private:

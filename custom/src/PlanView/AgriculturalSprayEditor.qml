@@ -94,6 +94,67 @@ Rectangle {
                 fact:                   _root.missionItem.lineSpacing
             }
 
+            QGCLabel { text: qsTr("Boundary margin") }
+            FactTextField {
+                objectName:             "agriculturalSprayBoundaryMarginField"
+                Layout.fillWidth:       true
+                Layout.preferredWidth:  _root._fieldWidth
+                fact:                   _root.missionItem.boundaryMargin
+            }
+
+            QGCLabel { text: qsTr("Margin scope") }
+            FactComboBox {
+                objectName:             "agriculturalSprayBoundaryMarginScopeCombo"
+                Layout.fillWidth:       true
+                Layout.preferredWidth:  _root._fieldWidth
+                fact:                   _root.missionItem.boundaryMarginScope
+                indexModel:             false
+            }
+
+            QGCLabel {
+                objectName:         "agriculturalSprayMarginEdgeGuidance"
+                Layout.fillWidth:   true
+                Layout.columnSpan:  2
+                text:               qsTr("Tap an edge marker on the map to choose the boundary margin edge.")
+                wrapMode:           Text.WordWrap
+                visible:            _root.missionItem.boundaryMargin.rawValue > 0
+                                    && _root.missionItem.boundaryMarginScope.rawValue === 0
+            }
+
+            Repeater {
+                model: _root.missionItem.boundaryMarginScope.rawValue === 0
+                       ? _root.missionItem.fieldMarginRows
+                       : []
+
+                RowLayout {
+                    required property var modelData
+
+                    Layout.fillWidth:   true
+                    Layout.columnSpan:  2
+                    spacing:            _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             modelData.label
+                    }
+
+                    QGCTextField {
+                        Layout.preferredWidth: _root._fieldWidth
+                        text:                  Number(modelData.margin).toLocaleString(Qt.locale(), 'f', 2)
+                        inputMethodHints:      Qt.ImhFormattedNumbersOnly
+                        validator:             DoubleValidator { bottom: 0.0; decimals: 2 }
+                        onEditingFinished: {
+                            const value = Number.fromLocaleString(Qt.locale(), text)
+                            if (!isNaN(value) && value >= 0) {
+                                _root.missionItem.setFieldMargin(modelData.edgeIndex, value)
+                            }
+                        }
+                    }
+
+                    QGCLabel { text: qsTr("m") }
+                }
+            }
+
             QGCLabel {
                 objectName:         "agriculturalSprayDirectionGuidance"
                 Layout.fillWidth:   true
@@ -117,6 +178,57 @@ Rectangle {
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
                 fact:                   _root.missionItem.applicationRate
+            }
+        }
+
+        ColumnLayout {
+            readonly property var _rows: _root.missionItem.exclusionMarginRows || []
+
+            Layout.fillWidth: true
+            spacing:          _root._margin
+            visible:          _rows.length > 0
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Exclusion margins")
+                font.bold:        true
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Additional distance kept from each exclusion GeoFence while generating the spray route.")
+                wrapMode:         Text.WordWrap
+            }
+
+            Repeater {
+                model: parent._rows
+
+                RowLayout {
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing:          _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             modelData.label
+                    }
+
+                    QGCTextField {
+                        Layout.preferredWidth: _root._fieldWidth
+                        text:                  Number(modelData.margin).toLocaleString(Qt.locale(), 'f', 2)
+                        inputMethodHints:      Qt.ImhFormattedNumbersOnly
+                        validator:             DoubleValidator { bottom: 0.0; decimals: 2 }
+                        onEditingFinished: {
+                            const value = Number.fromLocaleString(Qt.locale(), text)
+                            if (!isNaN(value) && value >= 0) {
+                                _root.missionItem.setExclusionMargin(modelData.shape, value)
+                            }
+                        }
+                    }
+
+                    QGCLabel { text: qsTr("m") }
+                }
             }
         }
     }

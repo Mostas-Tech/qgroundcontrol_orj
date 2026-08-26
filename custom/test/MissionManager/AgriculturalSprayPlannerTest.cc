@@ -332,7 +332,8 @@ struct ParameterInterval
     return true;
 }
 
-[[nodiscard]] bool validateConnectorStringPulling(const PlannerResult& result, const OracleRegion& region, QString& failure)
+[[nodiscard]] bool validateConnectorStringPulling(const PlannerResult& result, const OracleRegion& region,
+                                                  QString& failure)
 {
     for (std::size_t start = 0; start < result.route.size(); ++start) {
         if (result.route[start].type != RoutePointType::SprayEnd) {
@@ -499,6 +500,62 @@ struct ParameterInterval
             first.route[index].position.north != second.route[index].position.north ||
             first.route[index].position.east != second.route[index].position.east) {
             return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] double segmentDistance(const Point& firstStart, const Point& firstEnd, const Point& secondStart,
+                                     const Point& secondEnd)
+{
+    const auto orientation = [](const Point& first, const Point& second, const Point& third) {
+        return cross(second - first, third - first);
+    };
+    const auto pointOnSegment = [](const Point& point, const Point& start, const Point& end) {
+        return point.north >= std::min(start.north, end.north) - ORACLE_TOLERANCE &&
+               point.north <= std::max(start.north, end.north) + ORACLE_TOLERANCE &&
+               point.east >= std::min(start.east, end.east) - ORACLE_TOLERANCE &&
+               point.east <= std::max(start.east, end.east) + ORACLE_TOLERANCE;
+    };
+    const double firstA = orientation(firstStart, firstEnd, secondStart);
+    const double firstB = orientation(firstStart, firstEnd, secondEnd);
+    const double secondA = orientation(secondStart, secondEnd, firstStart);
+    const double secondB = orientation(secondStart, secondEnd, firstEnd);
+    const bool properIntersection = ((firstA < -ORACLE_TOLERANCE && firstB > ORACLE_TOLERANCE) ||
+                                     (firstA > ORACLE_TOLERANCE && firstB < -ORACLE_TOLERANCE)) &&
+                                    ((secondA < -ORACLE_TOLERANCE && secondB > ORACLE_TOLERANCE) ||
+                                     (secondA > ORACLE_TOLERANCE && secondB < -ORACLE_TOLERANCE));
+    const bool boundaryIntersection =
+        (std::abs(firstA) <= ORACLE_TOLERANCE && pointOnSegment(secondStart, firstStart, firstEnd)) ||
+        (std::abs(firstB) <= ORACLE_TOLERANCE && pointOnSegment(secondEnd, firstStart, firstEnd)) ||
+        (std::abs(secondA) <= ORACLE_TOLERANCE && pointOnSegment(firstStart, secondStart, secondEnd)) ||
+        (std::abs(secondB) <= ORACLE_TOLERANCE && pointOnSegment(firstEnd, secondStart, secondEnd));
+    if (properIntersection || boundaryIntersection) {
+        return 0.0;
+    }
+    return std::min({pointToSegmentDistance(firstStart, secondStart, secondEnd),
+                     pointToSegmentDistance(firstEnd, secondStart, secondEnd),
+                     pointToSegmentDistance(secondStart, firstStart, firstEnd),
+                     pointToSegmentDistance(secondEnd, firstStart, firstEnd)});
+}
+
+[[nodiscard]] bool routeRespectsPolygonMargin(const PlannerResult& result, const Polygon& polygon, double margin,
+                                              QString& failure)
+{
+    for (std::size_t routeIndex = 1; routeIndex < result.route.size(); ++routeIndex) {
+        const Point& routeStart = result.route[routeIndex - 1].position;
+        const Point& routeEnd = result.route[routeIndex].position;
+        for (std::size_t edgeIndex = 0; edgeIndex < polygon.vertices.size(); ++edgeIndex) {
+            const Point& edgeStart = polygon.vertices[edgeIndex];
+            const Point& edgeEnd = polygon.vertices[(edgeIndex + 1) % polygon.vertices.size()];
+            const double clearance = segmentDistance(routeStart, routeEnd, edgeStart, edgeEnd);
+            if (clearance + ORACLE_TOLERANCE < margin) {
+                failure = QStringLiteral("Route segment %1 has only %2 m clearance from source edge %3")
+                              .arg(routeIndex - 1)
+                              .arg(clearance, 0, 'g', 12)
+                              .arg(edgeIndex);
+                return false;
+            }
         }
     }
     return true;
@@ -674,8 +731,7 @@ void AgriculturalSprayPlannerTest::_circleConnectorStringPulling_data()
     };
     for (int angle = 0; angle < 360; angle += 15) {
         for (std::size_t corner = 0; corner < entryCorners.size(); ++corner) {
-            QTest::newRow(
-                qPrintable(QStringLiteral("5m-angle-%1-corner-%2").arg(angle).arg(static_cast<int>(corner))))
+            QTest::newRow(qPrintable(QStringLiteral("5m-angle-%1-corner-%2").arg(angle).arg(static_cast<int>(corner))))
                 << static_cast<double>(angle) << static_cast<int>(entryCorners[corner]) << 5.0;
         }
     }
@@ -683,9 +739,8 @@ void AgriculturalSprayPlannerTest::_circleConnectorStringPulling_data()
     const std::array<double, 3> nonAlignedAngles{7.0, 22.0, 37.0};
     for (const double angle : nonAlignedAngles) {
         for (std::size_t corner = 0; corner < entryCorners.size(); ++corner) {
-            QTest::newRow(qPrintable(QStringLiteral("5m-angle-%1-corner-%2")
-                                         .arg(angle, 0, 'f', 0)
-                                         .arg(static_cast<int>(corner))))
+            QTest::newRow(
+                qPrintable(QStringLiteral("5m-angle-%1-corner-%2").arg(angle, 0, 'f', 0).arg(static_cast<int>(corner))))
                 << angle << static_cast<int>(entryCorners[corner]) << 5.0;
         }
     }
@@ -697,9 +752,8 @@ void AgriculturalSprayPlannerTest::_circleConnectorStringPulling_data()
         {187.0, EntryCorner::BottomRight},
     }};
     for (const auto& [angle, corner] : stressRows) {
-        QTest::newRow(qPrintable(QStringLiteral("50m-angle-%1-corner-%2")
-                                     .arg(angle, 0, 'f', 0)
-                                     .arg(static_cast<int>(corner))))
+        QTest::newRow(
+            qPrintable(QStringLiteral("50m-angle-%1-corner-%2").arg(angle, 0, 'f', 0).arg(static_cast<int>(corner))))
             << angle << static_cast<int>(corner) << 50.0;
     }
 }
@@ -843,6 +897,200 @@ void AgriculturalSprayPlannerTest::_entryCorner()
     QVERIFY2(validateSuccessfulResult(result, region, failure), qPrintable(failure));
 }
 
+void AgriculturalSprayPlannerTest::_boundaryMarginZeroPreservesRoute()
+{
+    PlannerInput baselineInput;
+    baselineInput.inclusions = {
+        Polygon{{{0.0, 0.0}, {30.0, 0.0}, {30.0, 8.0}, {12.0, 8.0}, {12.0, 20.0}, {0.0, 20.0}}}};
+    baselineInput.spacing = 4.0;
+    baselineInput.entryPoint = Point{0.0, 0.0};
+    baselineInput.sweepDirection = Point{1.0, 0.0};
+
+    const PlannerResult baseline = plan(baselineInput);
+    QCOMPARE(static_cast<int>(baseline.status), static_cast<int>(PlannerStatus::Success));
+
+    PlannerInput marginInput = baselineInput;
+    marginInput.boundaryMargin = 0.0;
+    marginInput.boundaryMarginScope = BoundaryMarginScope::AllEdges;
+    marginInput.marginEdgeIndex = 4;
+    const PlannerResult marginResult = plan(marginInput);
+    QVERIFY(sameResultExactly(baseline, marginResult));
+}
+
+void AgriculturalSprayPlannerTest::_selectedEdgeBoundaryMargin()
+{
+    PlannerInput input;
+    const Polygon source = rectangle(0.0, 30.0, 0.0, 20.0);
+    input.inclusions = {source};
+    input.spacing = 4.0;
+    input.entryPoint = Point{0.0, 0.0};
+    input.sweepDirection = Point{1.0, 0.0};
+    input.boundaryMargin = 3.0;
+    input.boundaryMarginScope = BoundaryMarginScope::SelectedEdge;
+    input.marginEdgeIndex = 0;
+
+    const PlannerResult result = plan(input);
+    QCOMPARE(static_cast<int>(result.status), static_cast<int>(PlannerStatus::Success));
+    QVERIFY(!result.route.empty());
+    for (const RoutePoint& point : result.route) {
+        QVERIFY(point.position.east >= input.boundaryMargin - ORACLE_TOLERANCE);
+        QVERIFY(point.position.north >= -ORACLE_TOLERANCE);
+        QVERIFY(point.position.north <= 30.0 + ORACLE_TOLERANCE);
+    }
+
+    const double firstAcross = result.legs.front().start.east;
+    QVERIFY(firstAcross >= input.boundaryMargin - ORACLE_TOLERANCE);
+    QVERIFY(firstAcross <= input.boundaryMargin + input.spacing + ORACLE_TOLERANCE);
+
+    PlannerInput multipleEdgesInput = input;
+    multipleEdgesInput.marginEdgeIndices = {0, 1};
+    multipleEdgesInput.marginEdgeMargins = {3.0, 1.0};
+    const PlannerResult multipleEdgesResult = plan(multipleEdgesInput);
+    QCOMPARE(static_cast<int>(multipleEdgesResult.status), static_cast<int>(PlannerStatus::Success));
+    for (const RoutePoint& point : multipleEdgesResult.route) {
+        QVERIFY(point.position.east >= 3.0 - ORACLE_TOLERANCE);
+        QVERIFY(point.position.north <= 29.0 + ORACLE_TOLERANCE);
+    }
+
+    input.marginEdgeIndex = 2;
+    const PlannerResult oppositeEdgeResult = plan(input);
+    QCOMPARE(static_cast<int>(oppositeEdgeResult.status), static_cast<int>(PlannerStatus::Success));
+    QVERIFY(!oppositeEdgeResult.route.empty());
+    QVERIFY(distance(oppositeEdgeResult.route.front().position, *input.entryPoint) <= ORACLE_TOLERANCE);
+
+    input.inclusions = {Polygon{{{0.0, 0.0}, {30.0, 0.0}, {30.0, 8.0}, {12.0, 8.0}, {12.0, 20.0}, {0.0, 20.0}}}};
+    input.marginEdgeIndex = 0;
+    input.boundaryMargin = 1.0;
+    const PlannerResult concaveResult = plan(input);
+    QCOMPARE(static_cast<int>(concaveResult.status), static_cast<int>(PlannerStatus::Success));
+    for (const RoutePoint& point : concaveResult.route) {
+        QVERIFY(point.position.east >= input.boundaryMargin - ORACLE_TOLERANCE);
+    }
+    OracleRegion concaveMarginRegion;
+    concaveMarginRegion.inclusionRectangles = {
+        oracleRectangle(0.0, 30.0, 1.0, 8.0),
+        oracleRectangle(0.0, 12.0, 8.0, 20.0),
+    };
+    QString concaveFailure;
+    QVERIFY2(validateSuccessfulResult(concaveResult, concaveMarginRegion, concaveFailure), qPrintable(concaveFailure));
+
+    input.inclusions = {source};
+    input.boundaryMargin = 21.0;
+    const PlannerResult excessiveResult = plan(input);
+    QCOMPARE(static_cast<int>(excessiveResult.status), static_cast<int>(PlannerStatus::EmptyEffectiveArea));
+    QVERIFY(excessiveResult.legs.empty());
+    QVERIFY(excessiveResult.route.empty());
+
+    PlannerInput collinearInput;
+    const Polygon collinearSource{{{0.0, 0.0}, {15.0, 0.0}, {30.0, 0.0}, {30.0, 20.0}, {0.0, 20.0}}};
+    collinearInput.inclusions = {collinearSource};
+    collinearInput.spacing = 4.0;
+    collinearInput.entryPoint = collinearSource.vertices[1];
+    collinearInput.sweepDirection = collinearSource.vertices[2] - *collinearInput.entryPoint;
+    collinearInput.boundaryMargin = 2.0;
+    collinearInput.boundaryMarginScope = BoundaryMarginScope::SelectedEdge;
+    collinearInput.marginEdgeIndex = 1;
+    const PlannerResult collinearResult = plan(collinearInput);
+    QCOMPARE(static_cast<int>(collinearResult.status), static_cast<int>(PlannerStatus::Success));
+    QVERIFY(!collinearResult.route.empty());
+
+    const Polygon reversedCollinearSource = reversed(collinearSource);
+    collinearInput.inclusions = {reversedCollinearSource};
+    collinearInput.entryPoint = reversedCollinearSource.vertices[2];
+    collinearInput.sweepDirection = reversedCollinearSource.vertices[3] - *collinearInput.entryPoint;
+    collinearInput.marginEdgeIndex = 2;
+    const PlannerResult reversedCollinearResult = plan(collinearInput);
+    QCOMPARE(static_cast<int>(reversedCollinearResult.status), static_cast<int>(PlannerStatus::Success));
+    QVERIFY(!reversedCollinearResult.route.empty());
+
+    PlannerInput splitInput;
+    const Polygon splitSource{
+        {{0.0, 0.0}, {30.0, 0.0}, {30.0, 20.0}, {22.0, 20.0}, {22.0, 6.0}, {8.0, 6.0}, {8.0, 20.0}, {0.0, 20.0}}};
+    splitInput.inclusions = {splitSource};
+    splitInput.spacing = 2.0;
+    splitInput.entryPoint = splitSource.vertices[0];
+    splitInput.sweepDirection = splitSource.vertices[1] - *splitInput.entryPoint;
+    splitInput.boundaryMargin = 8.0;
+    splitInput.boundaryMarginScope = BoundaryMarginScope::SelectedEdge;
+    splitInput.marginEdgeIndex = 0;
+    const PlannerResult splitResult = plan(splitInput);
+    QCOMPARE(static_cast<int>(splitResult.status), static_cast<int>(PlannerStatus::DisconnectedRegion));
+    QVERIFY(splitResult.route.empty());
+}
+
+void AgriculturalSprayPlannerTest::_allEdgesBoundaryMarginIsConcaveAndDeterministic()
+{
+    PlannerInput input;
+    const Polygon source{{{0.0, 0.0}, {30.0, 0.0}, {30.0, 8.0}, {12.0, 8.0}, {12.0, 20.0}, {0.0, 20.0}}};
+    input.inclusions = {source};
+    input.spacing = 2.0;
+    input.entryPoint = Point{0.0, 0.0};
+    input.sweepDirection = Point{1.0, 0.0};
+    input.boundaryMargin = 1.0;
+    input.boundaryMarginScope = BoundaryMarginScope::AllEdges;
+    input.marginEdgeIndex = 3;
+
+    const PlannerResult result = plan(input);
+    QCOMPARE(static_cast<int>(result.status), static_cast<int>(PlannerStatus::Success));
+    const PlannerResult repeated = plan(input);
+    QVERIFY(sameResultExactly(result, repeated));
+
+    QString failure;
+    QVERIFY2(routeRespectsPolygonMargin(result, source, input.boundaryMargin, failure), qPrintable(failure));
+}
+
+void AgriculturalSprayPlannerTest::_excessiveBoundaryMarginIsEmpty()
+{
+    PlannerInput input;
+    input.inclusions = {rectangle(0.0, 10.0, 0.0, 10.0)};
+    input.spacing = 2.0;
+    input.entryPoint = Point{0.0, 0.0};
+    input.sweepDirection = Point{1.0, 0.0};
+    input.boundaryMargin = 6.0;
+    input.boundaryMarginScope = BoundaryMarginScope::AllEdges;
+
+    const PlannerResult result = plan(input);
+    QCOMPARE(static_cast<int>(result.status), static_cast<int>(PlannerStatus::EmptyEffectiveArea));
+    QVERIFY(result.legs.empty());
+    QVERIFY(result.route.empty());
+}
+
+void AgriculturalSprayPlannerTest::_exclusionMarginsAreConservative()
+{
+    PlannerInput polygonInput;
+    const Polygon polygonExclusion = rectangle(12.0, 18.0, 7.0, 13.0);
+    polygonInput.inclusions = {rectangle(0.0, 30.0, 0.0, 20.0)};
+    polygonInput.exclusions = {polygonExclusion};
+    polygonInput.exclusionMargins = {2.0};
+    polygonInput.spacing = 2.0;
+    polygonInput.entryPoint = Point{0.0, 0.0};
+    polygonInput.sweepDirection = Point{1.0, 0.0};
+
+    const PlannerResult polygonResult = plan(polygonInput);
+    QCOMPARE(static_cast<int>(polygonResult.status), static_cast<int>(PlannerStatus::Success));
+    QString polygonFailure;
+    QVERIFY2(routeRespectsPolygonMargin(polygonResult, polygonExclusion, 2.0, polygonFailure),
+             qPrintable(polygonFailure));
+
+    PlannerInput circleInput = polygonInput;
+    circleInput.exclusions = {Circle{{15.0, 10.0}, 3.0}};
+    circleInput.exclusionMargins = {2.5};
+    const PlannerResult circleResult = plan(circleInput);
+    QCOMPARE(static_cast<int>(circleResult.status), static_cast<int>(PlannerStatus::Success));
+    for (std::size_t index = 1; index < circleResult.route.size(); ++index) {
+        const double clearance = pointToSegmentDistance(Point{15.0, 10.0}, circleResult.route[index - 1].position,
+                                                        circleResult.route[index].position);
+        QVERIFY(clearance + ORACLE_TOLERANCE >= 5.5);
+    }
+
+    PlannerInput invalidInput = polygonInput;
+    invalidInput.exclusionMargins.clear();
+    invalidInput.exclusionMargins.push_back(-1.0);
+    const PlannerResult invalidResult = plan(invalidInput);
+    QCOMPARE(static_cast<int>(invalidResult.status), static_cast<int>(PlannerStatus::InvalidInput));
+    QVERIFY(invalidResult.route.empty());
+}
+
 void AgriculturalSprayPlannerTest::_failureIsFailClosed_data()
 {
     QTest::addColumn<int>("scenario");
@@ -861,16 +1109,14 @@ void AgriculturalSprayPlannerTest::_failureIsFailClosed_data()
         << static_cast<int>(PlannerStatus::DisconnectedRegion);
     QTest::newRow("non-routable-exclusion-barrier")
         << static_cast<int>(FailureScenario::NonRoutableBarrier) << static_cast<int>(PlannerStatus::DisconnectedRegion);
-    QTest::newRow("non-routable-circle-barrier")
-        << static_cast<int>(FailureScenario::NonRoutableCircleBarrier)
-        << static_cast<int>(PlannerStatus::DisconnectedRegion);
+    QTest::newRow("non-routable-circle-barrier") << static_cast<int>(FailureScenario::NonRoutableCircleBarrier)
+                                                 << static_cast<int>(PlannerStatus::DisconnectedRegion);
     QTest::newRow("scanline-limit") << static_cast<int>(FailureScenario::ScanlineLimit)
                                     << static_cast<int>(PlannerStatus::ComplexityLimit);
     QTest::newRow("partial-route-limit") << static_cast<int>(FailureScenario::PartialRouteLimit)
                                          << static_cast<int>(PlannerStatus::ComplexityLimit);
-    QTest::newRow("topology-representative-limit")
-        << static_cast<int>(FailureScenario::TopologyRepresentativeLimit)
-        << static_cast<int>(PlannerStatus::ComplexityLimit);
+    QTest::newRow("topology-representative-limit") << static_cast<int>(FailureScenario::TopologyRepresentativeLimit)
+                                                   << static_cast<int>(PlannerStatus::ComplexityLimit);
 }
 
 void AgriculturalSprayPlannerTest::_failureIsFailClosed()
