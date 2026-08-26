@@ -50,6 +50,17 @@ struct Point
     return length(left - right);
 }
 
+[[nodiscard]] inline double geometryPointToSegmentDistance(const Point& point, const Point& first, const Point& second)
+{
+    const Point segment = second - first;
+    const double squaredLength = dot(segment, segment);
+    if (squaredLength <= std::numeric_limits<double>::epsilon()) {
+        return distance(point, first);
+    }
+    const double parameter = std::clamp(dot(point - first, segment) / squaredLength, 0.0, 1.0);
+    return distance(point, first + segment * parameter);
+}
+
 [[nodiscard]] inline bool geometryFinitePoint(const Point& point)
 {
     return std::isfinite(point.north) && std::isfinite(point.east);
@@ -71,14 +82,14 @@ struct Point
     return std::max(distanceEpsilon, roundingSafetyFactor * std::numeric_limits<double>::epsilon() * magnitude);
 }
 
-[[nodiscard]] inline double geometryCrossTolerance(const Point& left, const Point& right, double sourceCoordinateMagnitude)
+[[nodiscard]] inline double geometryCrossTolerance(const Point& left, const Point& right,
+                                                   double sourceCoordinateMagnitude)
 {
     constexpr double roundingSafetyFactor = 16.0;
     const double productMagnitude =
         std::max(1.0, std::abs(left.north * right.east) + std::abs(left.east * right.north));
-    const double subtractionError =
-        geometryCoordinateTolerance(sourceCoordinateMagnitude) *
-        (std::max(1.0, length(left)) + std::max(1.0, length(right)));
+    const double subtractionError = geometryCoordinateTolerance(sourceCoordinateMagnitude) *
+                                    (std::max(1.0, length(left)) + std::max(1.0, length(right)));
     return roundingSafetyFactor * std::numeric_limits<double>::epsilon() * productMagnitude + subtractionError;
 }
 
@@ -116,7 +127,7 @@ struct Point
 }
 
 [[nodiscard]] inline bool geometrySegmentsIntersect(const Point& firstStart, const Point& firstEnd,
-                                                     const Point& secondStart, const Point& secondEnd)
+                                                    const Point& secondStart, const Point& secondEnd)
 {
     const int firstA = geometryOrientation(firstStart, firstEnd, secondStart);
     const int firstB = geometryOrientation(firstStart, firstEnd, secondEnd);
@@ -195,6 +206,32 @@ struct Point
             const Point& candidateEnd = candidate[(candidateIndex + 1) % candidate.size()];
             if (geometryFinitePoint(candidateStart) && geometryFinitePoint(candidateEnd) &&
                 geometrySegmentsIntersect(sourceStart, sourceEnd, candidateStart, candidateEnd)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] inline bool polygonsOverlapOrWithinMargin(std::span<const Point> source, std::span<const Point> candidate,
+                                                        double margin)
+{
+    if (polygonsOverlapOrContain(source, candidate)) {
+        return true;
+    }
+    if (!std::isfinite(margin) || margin <= 0.0 || source.size() < 3 || candidate.size() < 3) {
+        return false;
+    }
+    for (std::size_t sourceIndex = 0; sourceIndex < source.size(); ++sourceIndex) {
+        const Point& sourceStart = source[sourceIndex];
+        const Point& sourceEnd = source[(sourceIndex + 1) % source.size()];
+        for (std::size_t candidateIndex = 0; candidateIndex < candidate.size(); ++candidateIndex) {
+            const Point& candidateStart = candidate[candidateIndex];
+            const Point& candidateEnd = candidate[(candidateIndex + 1) % candidate.size()];
+            if (geometryPointToSegmentDistance(sourceStart, candidateStart, candidateEnd) <= margin ||
+                geometryPointToSegmentDistance(sourceEnd, candidateStart, candidateEnd) <= margin ||
+                geometryPointToSegmentDistance(candidateStart, sourceStart, sourceEnd) <= margin ||
+                geometryPointToSegmentDistance(candidateEnd, sourceStart, sourceEnd) <= margin) {
                 return true;
             }
         }

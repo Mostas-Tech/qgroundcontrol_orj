@@ -60,6 +60,8 @@ AgriculturalSprayComplexItem::AgriculturalSprayComplexItem(PlanMasterController*
       _lineSpacingFact(0, QString::fromLatin1(lineSpacingName), FactMetaData::valueTypeDouble),
       _gridAngleFact(0, QString::fromLatin1(gridAngleName), FactMetaData::valueTypeDouble),
       _entryCornerFact(0, QString::fromLatin1(entryCornerName), FactMetaData::valueTypeUint32),
+      _boundaryMarginFact(0, QString::fromLatin1(boundaryMarginName), FactMetaData::valueTypeDouble),
+      _boundaryMarginScopeFact(0, QString::fromLatin1(boundaryMarginScopeName), FactMetaData::valueTypeUint32),
       _dropletClassFact(0, QString::fromLatin1(dropletClassName), FactMetaData::valueTypeUint32),
       _applicationRateFact(0, QString::fromLatin1(applicationRateName), FactMetaData::valueTypeDouble)
 {
@@ -68,6 +70,8 @@ AgriculturalSprayComplexItem::AgriculturalSprayComplexItem(PlanMasterController*
     _metadataValid =
         _initializeFact(_altitudeFact, altitudeName) && _initializeFact(_lineSpacingFact, lineSpacingName) &&
         _initializeFact(_gridAngleFact, gridAngleName) && _initializeFact(_entryCornerFact, entryCornerName) &&
+        _initializeFact(_boundaryMarginFact, boundaryMarginName) &&
+        _initializeFact(_boundaryMarginScopeFact, boundaryMarginScopeName) &&
         _initializeFact(_dropletClassFact, dropletClassName) &&
         _initializeFact(_applicationRateFact, applicationRateName);
 
@@ -75,8 +79,8 @@ AgriculturalSprayComplexItem::AgriculturalSprayComplexItem(PlanMasterController*
         _altitudeFact.setRawValue(SettingsManager::instance()->appSettings()->defaultMissionItemAltitude()->rawValue());
     }
 
-    for (Fact* fact : {&_altitudeFact, &_lineSpacingFact, &_gridAngleFact, &_entryCornerFact, &_dropletClassFact,
-                       &_applicationRateFact}) {
+    for (Fact* fact : {&_altitudeFact, &_lineSpacingFact, &_gridAngleFact, &_entryCornerFact, &_boundaryMarginFact,
+                       &_boundaryMarginScopeFact, &_dropletClassFact, &_applicationRateFact}) {
         connect(fact, &Fact::valueChanged, this, &AgriculturalSprayComplexItem::_inputChanged);
     }
     connect(_missionController, &MissionController::plannedHomePositionChanged, this,
@@ -112,9 +116,169 @@ QGeoCoordinate AgriculturalSprayComplexItem::directionEdgeEnd() const
                : QGeoCoordinate{};
 }
 
+QGeoCoordinate AgriculturalSprayComplexItem::marginEdgeStart() const
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    return _marginEdgeIndex >= 0 && _marginEdgeIndex < coordinates.count() ? coordinates[_marginEdgeIndex]
+                                                                           : QGeoCoordinate{};
+}
+
+QGeoCoordinate AgriculturalSprayComplexItem::marginEdgeEnd() const
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    return _marginEdgeIndex >= 0 && _marginEdgeIndex < coordinates.count()
+               ? coordinates[(_marginEdgeIndex + 1) % coordinates.count()]
+               : QGeoCoordinate{};
+}
+
+QVariantList AgriculturalSprayComplexItem::marginEdgeIndices() const
+{
+    QVariantList indices;
+    indices.reserve(_marginEdgeIndices.size());
+    for (const int index : _marginEdgeIndices) {
+        indices.append(index);
+    }
+    return indices;
+}
+
+QVariantList AgriculturalSprayComplexItem::fieldMarginRows() const
+{
+    QVariantList rows;
+    for (const int index : _marginEdgeIndices) {
+        rows.append(QVariantMap{
+            {QStringLiteral("edgeIndex"), index},
+            {QStringLiteral("label"), tr("Edge %1").arg(index + 1)},
+            {QStringLiteral("margin"), _marginEdgeMargins.value(index, _boundaryMarginFact.rawValue().toDouble())}});
+    }
+    return rows;
+}
+
 bool AgriculturalSprayComplexItem::sourcePolygonTraceMode() const
 {
     return _sourcePolygon && _sourcePolygon->traceMode();
+}
+
+QVariantList AgriculturalSprayComplexItem::exclusionMarginRows() const
+{
+    QVariantList rows;
+    if (!_polygonModel || !_circleModel) {
+        return rows;
+    }
+    for (int index = 0; index < _polygonModel->count(); ++index) {
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(index);
+        if (polygon && !polygon->inclusion()) {
+            rows.append(QVariantMap{{QStringLiteral("shape"), QVariant::fromValue(static_cast<QObject*>(polygon))},
+                                    {QStringLiteral("label"), tr("Polygon %1").arg(index + 1)},
+                                    {QStringLiteral("margin"), _exclusionMargin(polygon)}});
+        }
+    }
+    for (int index = 0; index < _circleModel->count(); ++index) {
+        QGCFenceCircle* const circle = _circleModel->value<QGCFenceCircle*>(index);
+        if (circle && !circle->inclusion()) {
+            rows.append(QVariantMap{{QStringLiteral("shape"), QVariant::fromValue(static_cast<QObject*>(circle))},
+                                    {QStringLiteral("label"), tr("Circle %1").arg(index + 1)},
+                                    {QStringLiteral("margin"), _exclusionMargin(circle)}});
+        }
+    }
+    return rows;
+}
+
+double AgriculturalSprayComplexItem::_exclusionMargin(const QObject* shape) const
+{
+    return shape ? _exclusionMargins.value(const_cast<QObject*>(shape), _defaultExclusionMargin) : 0.0;
+}
+
+void AgriculturalSprayComplexItem::setExclusionMargin(QObject* shape, double margin)
+{
+    if (!shape || !std::isfinite(margin) || margin < 0.0 ||
+        (!qobject_cast<QGCFencePolygon*>(shape) && !qobject_cast<QGCFenceCircle*>(shape))) {
+        qCWarning(AgriculturalSprayComplexItemLog)
+            << "Invalid exclusion margin" << "shape:" << shape << "margin:" << margin;
+        return;
+    }
+    if (qFuzzyCompare(_exclusionMargin(shape) + 1.0, margin + 1.0)) {
+        return;
+    }
+    _exclusionMargins[shape] = margin;
+    emit exclusionMarginRowsChanged();
+    if (!_loading) {
+        setDirty(true);
+        _invalidateRoute();
+        _scheduleRebuild();
+    }
+}
+
+void AgriculturalSprayComplexItem::_pruneExclusionMargins()
+{
+    for (auto iterator = _exclusionMargins.begin(); iterator != _exclusionMargins.end();) {
+        QObject* const shape = iterator.key();
+        const bool present = (_polygonModel && _polygonModel->indexOf(shape) >= 0) ||
+                             (_circleModel && _circleModel->indexOf(shape) >= 0);
+        if (!present) {
+            iterator = _exclusionMargins.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+}
+
+bool AgriculturalSprayComplexItem::_resolveLoadedExclusionMargins(QString& errorText)
+{
+    if (!_loadedExclusionMarginsPending) {
+        return true;
+    }
+    if (!_polygonModel || !_circleModel) {
+        errorText = tr("GeoFence shape models are unavailable for exclusion margins.");
+        return false;
+    }
+
+    QMap<QObject*, double> resolvedMargins;
+    for (int index = 0; index < _polygonModel->count(); ++index) {
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(index);
+        if (polygon && !polygon->inclusion()) {
+            resolvedMargins[polygon] = _loadedExclusionMarginDefault;
+        }
+    }
+    for (int index = 0; index < _circleModel->count(); ++index) {
+        QGCFenceCircle* const circle = _circleModel->value<QGCFenceCircle*>(index);
+        if (circle && !circle->inclusion()) {
+            resolvedMargins[circle] = _loadedExclusionMarginDefault;
+        }
+    }
+    for (auto iterator = _loadedPolygonExclusionMargins.cbegin(); iterator != _loadedPolygonExclusionMargins.cend();
+         ++iterator) {
+        if (iterator.key() < 0 || iterator.key() >= _polygonModel->count()) {
+            errorText = tr("A saved exclusion polygon margin index is out of range.");
+            return false;
+        }
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(iterator.key());
+        if (!polygon || polygon->inclusion()) {
+            errorText = tr("A saved exclusion polygon margin does not reference an exclusion polygon.");
+            return false;
+        }
+        resolvedMargins[polygon] = iterator.value();
+    }
+    for (auto iterator = _loadedCircleExclusionMargins.cbegin(); iterator != _loadedCircleExclusionMargins.cend();
+         ++iterator) {
+        if (iterator.key() < 0 || iterator.key() >= _circleModel->count()) {
+            errorText = tr("A saved exclusion circle margin index is out of range.");
+            return false;
+        }
+        QGCFenceCircle* const circle = _circleModel->value<QGCFenceCircle*>(iterator.key());
+        if (!circle || circle->inclusion()) {
+            errorText = tr("A saved exclusion circle margin does not reference an exclusion circle.");
+            return false;
+        }
+        resolvedMargins[circle] = iterator.value();
+    }
+
+    _exclusionMargins = std::move(resolvedMargins);
+    _loadedPolygonExclusionMargins.clear();
+    _loadedCircleExclusionMargins.clear();
+    _loadedExclusionMarginsPending = false;
+    _defaultExclusionMargin = 1.0;
+    emit exclusionMarginRowsChanged();
+    return true;
 }
 
 void AgriculturalSprayComplexItem::setDirectionVertexIndex(int index)
@@ -140,6 +304,87 @@ void AgriculturalSprayComplexItem::setDirectionVertexIndex(int index)
     _loadedDirectionRequiresValidation = false;
     emit directionVertexIndexChanged();
     emit directionEdgeChanged();
+    if (!_loading) {
+        setDirty(true);
+        _invalidateRoute();
+        _scheduleRebuild();
+    }
+}
+
+void AgriculturalSprayComplexItem::setMarginEdgeIndex(int index)
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    if (index < 0 || index >= coordinates.count()) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Margin edge index is outside the source polygon"
+                                                   << "index:" << index << "count:" << coordinates.count();
+        return;
+    }
+    const QGeoCoordinate& start = coordinates[index];
+    const QGeoCoordinate& end = coordinates[(index + 1) % coordinates.count()];
+    if (!finiteCoordinate(start) || !finiteCoordinate(end) || start.distanceTo(end) <= 1e-6) {
+        qCWarning(AgriculturalSprayComplexItemLog) << "Margin selection references an invalid source polygon edge"
+                                                   << "index:" << index;
+        return;
+    }
+    if (_marginEdgeIndex == index) {
+        return;
+    }
+    _marginEdgeIndex = index;
+    _marginEdgeIndices = {index};
+    _marginEdgeMargins = {{index, _boundaryMarginFact.rawValue().toDouble()}};
+    _loadedMarginEdgeRequiresValidation = false;
+    emit marginEdgeIndexChanged();
+    emit marginEdgeIndicesChanged();
+    emit fieldMarginRowsChanged();
+    emit marginEdgeChanged();
+    if (!_loading) {
+        setDirty(true);
+        _invalidateRoute();
+        _scheduleRebuild();
+    }
+}
+
+void AgriculturalSprayComplexItem::toggleMarginEdgeIndex(int index)
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    if (index < 0 || index >= coordinates.count()) {
+        return;
+    }
+    if (_marginEdgeIndices.contains(index)) {
+        if (_marginEdgeIndices.size() == 1) {
+            return;
+        }
+        _marginEdgeIndices.removeAll(index);
+        _marginEdgeMargins.remove(index);
+        _marginEdgeIndex = _marginEdgeIndices.constLast();
+    } else {
+        _marginEdgeIndices.append(index);
+        _marginEdgeMargins[index] = _boundaryMarginFact.rawValue().toDouble();
+        std::sort(_marginEdgeIndices.begin(), _marginEdgeIndices.end());
+        _marginEdgeIndex = index;
+    }
+    _loadedMarginEdgeRequiresValidation = false;
+    emit marginEdgeIndexChanged();
+    emit marginEdgeIndicesChanged();
+    emit fieldMarginRowsChanged();
+    emit marginEdgeChanged();
+    if (!_loading) {
+        setDirty(true);
+        _invalidateRoute();
+        _scheduleRebuild();
+    }
+}
+
+void AgriculturalSprayComplexItem::setFieldMargin(int index, double margin)
+{
+    if (!_marginEdgeIndices.contains(index) || !std::isfinite(margin) || margin < 0.0) {
+        return;
+    }
+    if (qFuzzyCompare(_marginEdgeMargins.value(index) + 1.0, margin + 1.0)) {
+        return;
+    }
+    _marginEdgeMargins[index] = margin;
+    emit fieldMarginRowsChanged();
     if (!_loading) {
         setDirty(true);
         _invalidateRoute();
@@ -258,8 +503,10 @@ void AgriculturalSprayComplexItem::_connectPolygonSignals(QGCFencePolygon* polyg
     _shapeConnections.append(connect(polygon, &QGCMapPolygon::traceModeChanged, this, [this, polygon](bool traceMode) {
         _sourcePolygonTraceModeChanged(polygon, traceMode);
     }));
-    _shapeConnections.append(
-        connect(polygon, &QObject::destroyed, this, &AgriculturalSprayComplexItem::_fenceModelChanged));
+    _shapeConnections.append(connect(polygon, &QObject::destroyed, this, [this, polygon]() {
+        _exclusionMargins.remove(polygon);
+        _fenceModelChanged();
+    }));
 }
 
 void AgriculturalSprayComplexItem::_sourcePolygonTraceModeChanged(QGCFencePolygon* polygon, bool traceMode)
@@ -308,8 +555,10 @@ void AgriculturalSprayComplexItem::_connectCircleSignals(QGCFenceCircle* circle)
         connect(circle->radius(), &Fact::valueChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
     _shapeConnections.append(
         connect(circle, &QGCFenceCircle::inclusionChanged, this, &AgriculturalSprayComplexItem::_fenceInputChanged));
-    _shapeConnections.append(
-        connect(circle, &QObject::destroyed, this, &AgriculturalSprayComplexItem::_fenceModelChanged));
+    _shapeConnections.append(connect(circle, &QObject::destroyed, this, [this, circle]() {
+        _exclusionMargins.remove(circle);
+        _fenceModelChanged();
+    }));
 }
 
 void AgriculturalSprayComplexItem::_inputChanged()
@@ -330,8 +579,11 @@ void AgriculturalSprayComplexItem::_fenceInputChanged()
     }
 
     _normalizeDirectionVertexIndex();
+    _normalizeMarginEdgeIndex();
     emit sourcePolygonCoordinatesChanged();
     emit directionEdgeChanged();
+    emit marginEdgeChanged();
+    emit exclusionMarginRowsChanged();
     _invalidateRoute();
     _scheduleRebuild();
 }
@@ -339,9 +591,12 @@ void AgriculturalSprayComplexItem::_fenceInputChanged()
 void AgriculturalSprayComplexItem::_fenceModelChanged()
 {
     _shapeConnectionsDirty = true;
+    _pruneExclusionMargins();
     emit sourcePolygonCoordinatesChanged();
     emit directionEdgeChanged();
+    emit marginEdgeChanged();
     emit sourcePolygonTraceModeChanged();
+    emit exclusionMarginRowsChanged();
     _fenceInputChanged();
 }
 
@@ -496,6 +751,51 @@ void AgriculturalSprayComplexItem::_normalizeDirectionVertexIndex()
     }
 }
 
+void AgriculturalSprayComplexItem::_normalizeMarginEdgeIndex()
+{
+    const QList<QGeoCoordinate> coordinates = sourcePolygonCoordinates();
+    if (coordinates.isEmpty()) {
+        return;
+    }
+    if (_loadedMarginEdgeRequiresValidation) {
+        const bool allValid =
+            !_marginEdgeIndices.isEmpty() &&
+            std::all_of(_marginEdgeIndices.cbegin(), _marginEdgeIndices.cend(),
+                        [&coordinates](int index) { return index >= 0 && index < coordinates.count(); });
+        if (_marginEdgeIndex >= 0 && _marginEdgeIndex < coordinates.count() && allValid) {
+            _loadedMarginEdgeRequiresValidation = false;
+        }
+        return;
+    }
+    QList<int> normalizedIndices;
+    for (const int index : std::as_const(_marginEdgeIndices)) {
+        if (index >= 0 && index < coordinates.count() && !normalizedIndices.contains(index)) {
+            normalizedIndices.append(index);
+        }
+    }
+    if (normalizedIndices.isEmpty()) {
+        normalizedIndices.append(0);
+    }
+    if (_marginEdgeIndices != normalizedIndices) {
+        _marginEdgeIndices = normalizedIndices;
+        emit marginEdgeIndicesChanged();
+    }
+    QMap<int, double> normalizedMargins;
+    for (const int index : std::as_const(_marginEdgeIndices)) {
+        normalizedMargins[index] = _marginEdgeMargins.value(index, _boundaryMarginFact.rawValue().toDouble());
+    }
+    if (_marginEdgeMargins != normalizedMargins) {
+        _marginEdgeMargins = normalizedMargins;
+        emit fieldMarginRowsChanged();
+    }
+    const int normalized = _marginEdgeIndex >= 0 && _marginEdgeIndex < coordinates.count() ? _marginEdgeIndex : 0;
+    if (_marginEdgeIndex != normalized) {
+        _marginEdgeIndex = normalized;
+        emit marginEdgeIndexChanged();
+        emit marginEdgeChanged();
+    }
+}
+
 void AgriculturalSprayComplexItem::_migrateLegacyDirectionSelection()
 {
     if (!_legacyDirectionPending || !_sourcePolygon || !_sourcePolygon->isValid()) {
@@ -642,9 +942,9 @@ void AgriculturalSprayComplexItem::_clearGeneratedRoute()
 
 bool AgriculturalSprayComplexItem::_validateCurrentFacts(QString& errorText)
 {
-    const std::array<Fact*, 6> facts = {
-        &_altitudeFact,    &_lineSpacingFact,  &_gridAngleFact,
-        &_entryCornerFact, &_dropletClassFact, &_applicationRateFact,
+    const std::array<Fact*, 8> facts = {
+        &_altitudeFact,       &_lineSpacingFact,         &_gridAngleFact,    &_entryCornerFact,
+        &_boundaryMarginFact, &_boundaryMarginScopeFact, &_dropletClassFact, &_applicationRateFact,
     };
 
     for (Fact* fact : facts) {
@@ -663,9 +963,14 @@ bool AgriculturalSprayComplexItem::_validateCurrentFacts(QString& errorText)
     }
 
     const uint entryCornerValue = _entryCornerFact.rawValue().toUInt();
+    const uint boundaryMarginScopeValue = _boundaryMarginScopeFact.rawValue().toUInt();
     const uint dropletClassValue = _dropletClassFact.rawValue().toUInt();
     if (entryCornerValue > static_cast<uint>(BottomRight)) {
         errorText = tr("Entry corner is outside the supported range.");
+        return false;
+    }
+    if (boundaryMarginScopeValue > static_cast<uint>(AllEdges)) {
+        errorText = tr("Boundary margin scope is outside the supported range.");
         return false;
     }
     if (dropletClassValue < static_cast<uint>(Fine) || dropletClassValue > static_cast<uint>(Coarse)) {
@@ -692,6 +997,10 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
 
     if (!_resolveSourcePolygon(errorText)) {
         failureStatus = _sourcePolygonReferencePresent ? GenerationError : NoInclusion;
+        return false;
+    }
+    if (!_resolveLoadedExclusionMargins(errorText)) {
+        failureStatus = GenerationError;
         return false;
     }
     if (_sourcePolygon->traceMode() || !_sourcePolygon->isValid()) {
@@ -738,10 +1047,23 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
 
     _migrateLegacyDirectionSelection();
     _normalizeDirectionVertexIndex();
+    _normalizeMarginEdgeIndex();
     if (_directionVertexIndex < 0 || _directionVertexIndex >= static_cast<int>(sourcePoints.size())) {
         failureStatus = InvalidArea;
         errorText = tr("The selected direction vertex is outside the spray polygon.");
         return false;
+    }
+    if (_marginEdgeIndex < 0 || _marginEdgeIndex >= static_cast<int>(sourcePoints.size())) {
+        failureStatus = InvalidArea;
+        errorText = tr("The selected margin edge is outside the spray polygon.");
+        return false;
+    }
+    for (const int edgeIndex : std::as_const(_marginEdgeIndices)) {
+        if (edgeIndex < 0 || edgeIndex >= static_cast<int>(sourcePoints.size())) {
+            failureStatus = InvalidArea;
+            errorText = tr("A selected margin edge is outside the spray polygon.");
+            return false;
+        }
     }
     const AgriculturalSpray::Point entryPoint = sourcePoints[static_cast<std::size_t>(_directionVertexIndex)];
     const AgriculturalSpray::Point nextPoint =
@@ -774,7 +1096,8 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
         for (const QGeoCoordinate& coordinate : coordinates) {
             candidatePoints.push_back(localPoint(coordinate));
         }
-        if (!AgriculturalSpray::polygonsOverlapOrContain(sourcePoints, candidatePoints)) {
+        const double exclusionMargin = _exclusionMargin(fencePolygon);
+        if (!AgriculturalSpray::polygonsOverlapOrWithinMargin(sourcePoints, candidatePoints, exclusionMargin)) {
             continue;
         }
 
@@ -794,6 +1117,7 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
             return false;
         }
         input.exclusions.emplace_back(std::move(polygon));
+        input.exclusionMargins.push_back(exclusionMargin);
     }
 
     for (int index = 0; index < _circleModel->count(); ++index) {
@@ -808,8 +1132,19 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
             .center = localPoint(fenceCircle->center()),
             .radius = fenceCircle->radius()->rawValue().toDouble(),
         };
-        if (fenceCircle->inclusion() ||
-            !AgriculturalSpray::circleOverlapsOrContains(sourcePoints, circle.center, circle.radius)) {
+        if (fenceCircle->inclusion()) {
+            continue;
+        }
+        const double exclusionMargin = _exclusionMargin(fenceCircle);
+        const double expandedRadius = circle.radius + exclusionMargin;
+        if (!AgriculturalSpray::geometryFinitePoint(circle.center) || !std::isfinite(circle.radius) ||
+            circle.radius <= 0.0 || !std::isfinite(exclusionMargin) || exclusionMargin < 0.0 ||
+            !std::isfinite(expandedRadius) || expandedRadius <= 0.0) {
+            failureStatus = GenerationError;
+            errorText = tr("A GeoFence exclusion circle radius or margin is invalid.");
+            return false;
+        }
+        if (!AgriculturalSpray::circleOverlapsOrContains(sourcePoints, circle.center, expandedRadius)) {
             continue;
         }
         if (input.inclusions.size() + input.exclusions.size() + 1 > input.limits.maxShapes) {
@@ -819,11 +1154,23 @@ bool AgriculturalSprayComplexItem::_snapshotPlannerInput(AgriculturalSpray::Plan
             return false;
         }
         input.exclusions.emplace_back(circle);
+        input.exclusionMargins.push_back(exclusionMargin);
     }
 
     input.spacing = _lineSpacingFact.rawValue().toDouble();
     input.gridAngleDegrees = _gridAngleFact.rawValue().toDouble();
     input.circleChordError = CIRCLE_CHORD_ERROR_METERS;
+    input.boundaryMargin = _boundaryMarginFact.rawValue().toDouble();
+    input.boundaryMarginScope =
+        static_cast<AgriculturalSpray::BoundaryMarginScope>(_boundaryMarginScopeFact.rawValue().toUInt());
+    input.marginEdgeIndex = static_cast<std::size_t>(_marginEdgeIndex);
+    input.marginEdgeIndices.reserve(static_cast<std::size_t>(_marginEdgeIndices.size()));
+    input.marginEdgeMargins.reserve(static_cast<std::size_t>(_marginEdgeIndices.size()));
+    for (const int edgeIndex : std::as_const(_marginEdgeIndices)) {
+        input.marginEdgeIndices.push_back(static_cast<std::size_t>(edgeIndex));
+        input.marginEdgeMargins.push_back(
+            _marginEdgeMargins.value(edgeIndex, _boundaryMarginFact.rawValue().toDouble()));
+    }
     input.entryCorner = static_cast<AgriculturalSpray::EntryCorner>(_entryCornerFact.rawValue().toUInt());
     return true;
 }
@@ -937,6 +1284,7 @@ void AgriculturalSprayComplexItem::_publishPlannerResult(const AgriculturalSpray
             itemStatus = GenerationError;
             break;
         case AgriculturalSpray::PlannerStatus::EmptyRegion:
+        case AgriculturalSpray::PlannerStatus::EmptyEffectiveArea:
             itemStatus = EmptyEffectiveArea;
             break;
         case AgriculturalSpray::PlannerStatus::DisconnectedRegion:
@@ -1269,10 +1617,43 @@ void AgriculturalSprayComplexItem::save(QJsonArray& missionItems)
     saveObject[ComplexMissionItem::jsonComplexItemTypeKey] = jsonComplexItemTypeValue;
     saveObject[altitudeName] = _altitudeFact.rawValue().toDouble();
     saveObject[lineSpacingName] = _lineSpacingFact.rawValue().toDouble();
+    saveObject[boundaryMarginName] = _boundaryMarginFact.rawValue().toDouble();
+    saveObject[boundaryMarginScopeName] = static_cast<int>(_boundaryMarginScopeFact.rawValue().toUInt());
     saveObject[_directionVertexIndexKey] = _directionVertexIndex;
+    saveObject[_marginEdgeIndexKey] = _marginEdgeIndex;
+    QJsonArray marginEdgeIndices;
+    for (const int edgeIndex : std::as_const(_marginEdgeIndices)) {
+        marginEdgeIndices.append(edgeIndex);
+    }
+    saveObject[_marginEdgeIndicesKey] = marginEdgeIndices;
+    QJsonArray marginEdgeMargins;
+    for (const int edgeIndex : std::as_const(_marginEdgeIndices)) {
+        marginEdgeMargins.append(_marginEdgeMargins.value(edgeIndex, _boundaryMarginFact.rawValue().toDouble()));
+    }
+    saveObject[_marginEdgeMarginsKey] = marginEdgeMargins;
     saveObject[dropletClassName] = static_cast<int>(_dropletClassFact.rawValue().toUInt());
     saveObject[applicationRateName] = _applicationRateFact.rawValue().toDouble();
     saveObject[_sourcePolygonIndexKey] = sourcePolygonIndex;
+    QJsonArray exclusionMargins;
+    for (int index = 0; index < _polygonModel->count(); ++index) {
+        QGCFencePolygon* const polygon = _polygonModel->value<QGCFencePolygon*>(index);
+        const double margin = _exclusionMargin(polygon);
+        if (polygon && !polygon->inclusion()) {
+            exclusionMargins.append(QJsonObject{{QStringLiteral("shapeType"), QStringLiteral("polygon")},
+                                                {QStringLiteral("shapeIndex"), index},
+                                                {QStringLiteral("margin"), margin}});
+        }
+    }
+    for (int index = 0; index < _circleModel->count(); ++index) {
+        QGCFenceCircle* const circle = _circleModel->value<QGCFenceCircle*>(index);
+        const double margin = _exclusionMargin(circle);
+        if (circle && !circle->inclusion()) {
+            exclusionMargins.append(QJsonObject{{QStringLiteral("shapeType"), QStringLiteral("circle")},
+                                                {QStringLiteral("shapeIndex"), index},
+                                                {QStringLiteral("margin"), margin}});
+        }
+    }
+    saveObject[_exclusionMarginsKey] = exclusionMargins;
     missionItems.append(saveObject);
 }
 
@@ -1291,7 +1672,7 @@ bool AgriculturalSprayComplexItem::_validateLoadValue(Fact& fact, const QJsonVal
         return false;
     }
 
-    if ((&fact == &_entryCornerFact || &fact == &_dropletClassFact) &&
+    if ((&fact == &_entryCornerFact || &fact == &_boundaryMarginScopeFact || &fact == &_dropletClassFact) &&
         jsonValue.toDouble() != std::floor(jsonValue.toDouble())) {
         errorText = tr("%1 must be an integer enum value.").arg(fact.name());
         return false;
@@ -1340,7 +1721,8 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         return false;
     }
     const int version = versionValue.toInt();
-    if (version != _legacyJsonVersion && version != _jsonVersion) {
+    if (version != _legacyJsonVersion && version != _directionJsonVersion && version != _boundaryMarginJsonVersion &&
+        version != _exclusionMarginJsonVersion && version != _multiEdgeJsonVersion && version != _jsonVersion) {
         errorString = tr("Agricultural Spray version %1 is not supported.").arg(version);
         qCWarning(AgriculturalSprayComplexItemLog) << errorString;
         _setStatus(GenerationError, errorString);
@@ -1355,13 +1737,27 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         {lineSpacingName, QJsonValue::Double, true},
         {dropletClassName, QJsonValue::Double, true},
         {applicationRateName, QJsonValue::Double, true},
-        {_sourcePolygonIndexKey, QJsonValue::Double, version == _jsonVersion},
+        {_sourcePolygonIndexKey, QJsonValue::Double, version >= _directionJsonVersion},
     };
     if (version == _legacyJsonVersion) {
         keyInfoList.append({gridAngleName, QJsonValue::Double, true});
         keyInfoList.append({entryCornerName, QJsonValue::Double, true});
     } else {
         keyInfoList.append({_directionVertexIndexKey, QJsonValue::Double, true});
+    }
+    if (version >= _boundaryMarginJsonVersion) {
+        keyInfoList.append({boundaryMarginName, QJsonValue::Double, true});
+        keyInfoList.append({boundaryMarginScopeName, QJsonValue::Double, true});
+        keyInfoList.append({_marginEdgeIndexKey, QJsonValue::Double, true});
+    }
+    if (version >= _exclusionMarginJsonVersion) {
+        keyInfoList.append({_exclusionMarginsKey, QJsonValue::Array, true});
+    }
+    if (version >= _multiEdgeJsonVersion) {
+        keyInfoList.append({_marginEdgeIndicesKey, QJsonValue::Array, true});
+    }
+    if (version == _jsonVersion) {
+        keyInfoList.append({_marginEdgeMarginsKey, QJsonValue::Array, true});
     }
 
     if (!JsonParsing::validateKeysStrict(complexObject, keyInfoList, errorString)) {
@@ -1421,7 +1817,12 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
 
     QVariant legacyGridAngle;
     QVariant legacyEntryCorner;
+    QVariant loadedBoundaryMargin = 0.0;
+    QVariant loadedBoundaryMarginScope = static_cast<uint>(SelectedEdge);
     int loadedDirectionVertexIndex = 0;
+    int loadedMarginEdgeIndex = 0;
+    QList<int> loadedMarginEdgeIndices;
+    QMap<int, double> loadedMarginEdgeMargins;
     if (version == _legacyJsonVersion) {
         if (!_validateLoadValue(_gridAngleFact, complexObject[gridAngleName], legacyGridAngle, errorString) ||
             !_validateLoadValue(_entryCornerFact, complexObject[entryCornerName], legacyEntryCorner, errorString)) {
@@ -1446,6 +1847,119 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         }
         loadedDirectionVertexIndex = static_cast<int>(directionIndexValue);
     }
+    if (version >= _boundaryMarginJsonVersion) {
+        if (!_validateLoadValue(_boundaryMarginFact, complexObject[boundaryMarginName], loadedBoundaryMargin,
+                                errorString) ||
+            !_validateLoadValue(_boundaryMarginScopeFact, complexObject[boundaryMarginScopeName],
+                                loadedBoundaryMarginScope, errorString)) {
+            qCWarning(AgriculturalSprayComplexItemLog) << "Boundary margin validation failed"
+                                                       << "error:" << errorString;
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        const double marginEdgeIndex = complexObject[_marginEdgeIndexKey].toDouble();
+        if (!std::isfinite(marginEdgeIndex) || marginEdgeIndex != std::floor(marginEdgeIndex) ||
+            marginEdgeIndex < 0.0 || marginEdgeIndex > static_cast<double>(std::numeric_limits<int>::max())) {
+            errorString = tr("Margin edge index must be a non-negative integer.");
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        loadedMarginEdgeIndex = static_cast<int>(marginEdgeIndex);
+        loadedMarginEdgeIndices.append(loadedMarginEdgeIndex);
+    }
+    if (version >= _multiEdgeJsonVersion) {
+        loadedMarginEdgeIndices.clear();
+        const QJsonArray edgeIndices = complexObject[_marginEdgeIndicesKey].toArray();
+        for (const QJsonValue& value : edgeIndices) {
+            if (!value.isDouble() || !std::isfinite(value.toDouble()) ||
+                value.toDouble() != std::floor(value.toDouble()) || value.toDouble() < 0.0 ||
+                value.toDouble() > static_cast<double>(std::numeric_limits<int>::max())) {
+                errorString = tr("A margin edge index must be a non-negative integer.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            const int edgeIndex = value.toInt();
+            if (loadedMarginEdgeIndices.contains(edgeIndex)) {
+                errorString = tr("A margin edge index is duplicated.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            loadedMarginEdgeIndices.append(edgeIndex);
+        }
+        if (loadedMarginEdgeIndices.isEmpty()) {
+            errorString = tr("At least one margin edge must be selected.");
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+    }
+    if (version == _jsonVersion) {
+        const QJsonArray edgeMargins = complexObject[_marginEdgeMarginsKey].toArray();
+        if (edgeMargins.size() != loadedMarginEdgeIndices.size()) {
+            errorString = tr("Margin edge value count does not match selected edges.");
+            _setStatus(GenerationError, errorString);
+            return false;
+        }
+        for (int position = 0; position < edgeMargins.size(); ++position) {
+            const double margin = edgeMargins.at(position).toDouble(std::numeric_limits<double>::quiet_NaN());
+            if (!std::isfinite(margin) || margin < 0.0) {
+                errorString = tr("A margin edge value is invalid.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            loadedMarginEdgeMargins[loadedMarginEdgeIndices[position]] = margin;
+        }
+    } else {
+        for (const int edgeIndex : std::as_const(loadedMarginEdgeIndices)) {
+            loadedMarginEdgeMargins[edgeIndex] = loadedBoundaryMargin.toDouble();
+        }
+    }
+    QMap<int, double> loadedPolygonExclusionMargins;
+    QMap<int, double> loadedCircleExclusionMargins;
+    if (version >= _exclusionMarginJsonVersion) {
+        const QJsonArray margins = complexObject[_exclusionMarginsKey].toArray();
+        for (const QJsonValue& value : margins) {
+            if (!value.isObject()) {
+                errorString = tr("An exclusion margin entry must be an object.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            const QJsonObject marginObject = value.toObject();
+            if (marginObject.size() != 3 || !marginObject[QStringLiteral("shapeType")].isString() ||
+                !marginObject[QStringLiteral("shapeIndex")].isDouble() ||
+                !marginObject[QStringLiteral("margin")].isDouble()) {
+                errorString = tr("An exclusion margin entry is invalid.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            const double indexValue = marginObject[QStringLiteral("shapeIndex")].toDouble();
+            const double marginValue = marginObject[QStringLiteral("margin")].toDouble();
+            if (!std::isfinite(indexValue) || indexValue != std::floor(indexValue) || indexValue < 0.0 ||
+                indexValue > static_cast<double>(std::numeric_limits<int>::max()) || !std::isfinite(marginValue) ||
+                marginValue < 0.0) {
+                errorString = tr("An exclusion margin index or value is invalid.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            QMap<int, double>* target = nullptr;
+            const QString shapeType = marginObject[QStringLiteral("shapeType")].toString();
+            if (shapeType == QLatin1String("polygon")) {
+                target = &loadedPolygonExclusionMargins;
+            } else if (shapeType == QLatin1String("circle")) {
+                target = &loadedCircleExclusionMargins;
+            } else {
+                errorString = tr("An exclusion margin shape type is invalid.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            const int shapeIndex = static_cast<int>(indexValue);
+            if (target->contains(shapeIndex)) {
+                errorString = tr("An exclusion margin shape is duplicated.");
+                _setStatus(GenerationError, errorString);
+                return false;
+            }
+            target->insert(shapeIndex, marginValue);
+        }
+    }
 
     _sourcePolygon.clear();
     _loadedFromJson = true;
@@ -1467,10 +1981,25 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
         _loadedSourcePolygonIndex = static_cast<int>(sourceIndex);
     }
 
+    _loadedPolygonExclusionMargins = std::move(loadedPolygonExclusionMargins);
+    _loadedCircleExclusionMargins = std::move(loadedCircleExclusionMargins);
+    _loadedExclusionMarginDefault = version >= _jsonVersion ? 1.0 : 0.0;
+    _loadedExclusionMarginsPending = true;
+
     _loading = true;
     for (std::size_t index = 0; index < facts.size(); ++index) {
         facts[index]->setRawValue(values[index]);
     }
+    _boundaryMarginFact.setRawValue(loadedBoundaryMargin);
+    _boundaryMarginScopeFact.setRawValue(loadedBoundaryMarginScope);
+    _marginEdgeIndex = loadedMarginEdgeIndex;
+    _marginEdgeIndices =
+        loadedMarginEdgeIndices.isEmpty() ? QList<int>{loadedMarginEdgeIndex} : loadedMarginEdgeIndices;
+    _marginEdgeMargins = std::move(loadedMarginEdgeMargins);
+    if (_marginEdgeMargins.isEmpty()) {
+        _marginEdgeMargins[loadedMarginEdgeIndex] = loadedBoundaryMargin.toDouble();
+    }
+    _loadedMarginEdgeRequiresValidation = version >= _boundaryMarginJsonVersion;
     if (version == _legacyJsonVersion) {
         _gridAngleFact.setRawValue(legacyGridAngle);
         _entryCornerFact.setRawValue(legacyEntryCorner);
@@ -1486,6 +2015,10 @@ bool AgriculturalSprayComplexItem::load(const QJsonObject& complexObject, int se
     }
     emit directionVertexIndexChanged();
     emit directionEdgeChanged();
+    emit marginEdgeIndexChanged();
+    emit marginEdgeIndicesChanged();
+    emit fieldMarginRowsChanged();
+    emit marginEdgeChanged();
     _loading = false;
 
     setSequenceNumber(sequenceNumber);

@@ -41,6 +41,25 @@
             "default": 0
         },
         {
+            "name": "BoundaryMargin",
+            "shortDesc": "Distance kept inside the selected field boundary.",
+            "type": "double",
+            "units": "m",
+            "min": 0.0,
+            "decimalPlaces": 2,
+            "default": 1.0
+        },
+        {
+            "name": "BoundaryMarginScope",
+            "shortDesc": "Field boundary edges that receive the margin.",
+            "type": "uint32",
+            "min": 0,
+            "max": 1,
+            "enumStrings": "Selected Edge,All Edges",
+            "enumValues": "0,1",
+            "default": 1
+        },
+        {
             "name": "DropletClass",
             "shortDesc": "ASABE spray droplet size class.",
             "type": "uint32",
