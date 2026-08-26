@@ -21,6 +21,8 @@ private slots:
     void exclusionCircleMarginOverflowFailsClosed();
     void exclusionMarginOutsideFenceChangesRoute();
     void rapidDirectionChangesPublishLatestRoute();
+    void nonSprayAreasSplitSprayStateWithoutRerouting();
+    void nonSprayJsonRoundTripIsStrictAndTransactional();
 
 private:
     void _factMetadataAndAreaStates();

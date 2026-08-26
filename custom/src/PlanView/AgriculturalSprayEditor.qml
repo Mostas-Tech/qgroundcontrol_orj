@@ -18,6 +18,13 @@ Rectangle {
     readonly property bool _noInclusion:       missionItem.status === 0
     readonly property bool _routeReady:        missionItem.specifiesCoordinate
 
+    function setNonSprayPolygonInteractive(selectedPolygon, interactive) {
+        for (let index = 0; index < missionItem.nonSprayPolygons.count; index++) {
+            const polygon = missionItem.nonSprayPolygons.get(index)
+            polygon.interactive = interactive && polygon === selectedPolygon
+        }
+    }
+
     objectName: "agriculturalSprayEditor"
     width:      availableWidth
     height:     editorColumn.implicitHeight + (_margin * 2)
@@ -228,6 +235,62 @@ Rectangle {
                     }
 
                     QGCLabel { text: qsTr("m") }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing:          _root._margin
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Traversable non-spray areas")
+                font.bold:        true
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("The route can cross these polygons, but spraying is paused inside them.")
+                wrapMode:         Text.WordWrap
+            }
+
+            QGCButton {
+                objectName:       "agriculturalSprayAddNonSprayPolygonButton"
+                Layout.fillWidth: true
+                text:             qsTr("Add non-spray area")
+                onClicked: {
+                    const polygon = _root.missionItem.addNonSprayPolygon()
+                    if (polygon) {
+                        _root.setNonSprayPolygonInteractive(polygon, true)
+                    }
+                }
+            }
+
+            Repeater {
+                model: _root.missionItem.nonSprayPolygons
+
+                RowLayout {
+                    required property var object
+                    required property int index
+
+                    Layout.fillWidth: true
+                    spacing:          _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             qsTr("Non-spray area %1").arg(parent.index + 1)
+                    }
+
+                    QGCButton {
+                        text: qsTr("Edit")
+                        onClicked: _root.setNonSprayPolygonInteractive(parent.object, !parent.object.interactive)
+                    }
+
+                    QGCButton {
+                        text:      qsTr("Delete")
+                        onClicked: _root.missionItem.removeNonSprayPolygon(parent.object)
+                    }
                 }
             }
         }

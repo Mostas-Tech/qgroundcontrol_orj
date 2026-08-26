@@ -88,7 +88,7 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     }
     QVERIFY(sourcePolygonIndex >= 0);
     QVERIFY(items.at(0).toObject().value(QStringLiteral("sourcePolygonIndex")).toInt() >= 0);
-    QCOMPARE(items.at(0).toObject().value(QStringLiteral("version")).toInt(), 6);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("version")).toInt(), 7);
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("directionVertexIndex")).toInt(), 2);
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("BoundaryMargin")).toDouble(), 1.0);
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("BoundaryMarginScope")).toInt(), 1);
@@ -100,6 +100,7 @@ void AgriculturalSprayPlanLoadTest::_missionLoadedBeforeFenceBuildsFinalRouteAnd
     QCOMPARE(savedMarginValues.size(), 1);
     QCOMPARE(savedMarginValues.at(0).toDouble(), 1.0);
     QCOMPARE(items.at(0).toObject().value(QStringLiteral("exclusionMargins")).toArray().size(), 0);
+    QCOMPARE(items.at(0).toObject().value(QStringLiteral("nonSprayPolygons")).toArray().size(), 0);
     QVERIFY(!items.at(0).toObject().contains(QStringLiteral("GridAngle")));
     QVERIFY(!items.at(0).toObject().contains(QStringLiteral("EntryCorner")));
 
