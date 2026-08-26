@@ -55,27 +55,52 @@ Rectangle {
             color:                  _root._routeReady ? qgcPal.text : qgcPal.warningText
         }
 
+        QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Spray fields")
+            font.bold: true
+        }
+
+        QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Create each field separately. Select a field below to edit its settings and route.")
+            wrapMode: Text.WordWrap
+        }
+
+        QGCComboBox {
+            objectName: "agriculturalSprayFieldSelector"
+            Layout.fillWidth: true
+            model: _root.missionItem.fieldRows
+            textRole: "name"
+            currentIndex: _root.missionItem.selectedFieldRow
+            onActivated: _root.missionItem.setSelectedFieldIndex(_root.missionItem.fieldRows[index].index)
+        }
+
         RowLayout {
             Layout.fillWidth: true
-            QGCLabel { text: qsTr("Fields") }
-            QGCComboBox {
-                objectName: "agriculturalSprayFieldSelector"
-                Layout.fillWidth: true
-                model: _root.missionItem.fieldRows
-                textRole: "name"
-                currentIndex: _root.missionItem.selectedFieldRow
-                onActivated: _root.missionItem.setSelectedFieldIndex(_root.missionItem.fieldRows[index].index)
-            }
+
             QGCTextField {
                 id: fieldNameField
-                Layout.preferredWidth: _root._fieldWidth
+                Layout.fillWidth: true
                 text: _root.missionItem.selectedFieldRow >= 0
                       ? _root.missionItem.fieldRows[_root.missionItem.selectedFieldRow].name
                       : ""
+                placeholderText: qsTr("Field name")
                 onEditingFinished: _root.missionItem.renameField(_root.missionItem.selectedFieldIndex, text)
             }
+
             QGCButton {
-                text: qsTr("Up")
+                text: qsTr("Add field")
+                onClicked: _root.missionItem.addField()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: qsTr("Move up")
                 enabled: _root.missionItem.selectedFieldRow > 0
                 onClicked: {
                     const row = _root.missionItem.selectedFieldRow
@@ -83,8 +108,10 @@ Rectangle {
                                                 _root.missionItem.fieldRows[row - 1].index)
                 }
             }
+
             QGCButton {
-                text: qsTr("Down")
+                Layout.fillWidth: true
+                text: qsTr("Move down")
                 enabled: _root.missionItem.selectedFieldRow >= 0
                          && _root.missionItem.selectedFieldRow < _root.missionItem.fieldRows.length - 1
                 onClicked: {
@@ -93,12 +120,10 @@ Rectangle {
                                                 _root.missionItem.fieldRows[row + 1].index)
                 }
             }
+
             QGCButton {
-                text: qsTr("Add")
-                onClicked: _root.missionItem.addField()
-            }
-            QGCButton {
-                text: qsTr("Delete")
+                Layout.fillWidth: true
+                text: qsTr("Delete field")
                 enabled: _root.missionItem.fieldRows.length > 1
                 onClicked: _root.missionItem.removeField(_root.missionItem.selectedFieldIndex)
             }
@@ -135,10 +160,25 @@ Rectangle {
         }
 
         QGCButton {
+            objectName: "agriculturalSprayFinishFieldButton"
+            Layout.fillWidth: true
+            text: qsTr("Finish field")
+            visible: _root._selectedField && _root._selectedField.polygon.traceMode
+            onClicked: _root._selectedField.polygon.traceMode = false
+        }
+
+        QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Click Add field, place at least three points on the map, then click Finish field.")
+            wrapMode: Text.WordWrap
+            visible: _root._selectedField && _root._selectedField.polygon.traceMode
+        }
+
+        QGCButton {
             objectName:         "agriculturalSprayEditGeoFenceButton"
             Layout.fillWidth:   true
             text:               qsTr("Edit GeoFence")
-            visible:            _root._noInclusion
+            visible:            _root._noInclusion && !_root._selectedField
             onClicked:          _root._missionController.requestPlanEditLayer("fenceGroup")
         }
 
