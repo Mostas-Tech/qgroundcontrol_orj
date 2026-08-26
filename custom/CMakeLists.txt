@@ -20,6 +20,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomOptions.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayComplexItem.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayComplexItem.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayField.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayField.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayGeometry.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayPlanner.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/AgriculturalSprayPlanner.h
