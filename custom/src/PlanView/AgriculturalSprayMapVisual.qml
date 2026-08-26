@@ -309,14 +309,14 @@ Item {
         model: _root._fields
 
         delegate: Item {
-            required property var modelData
+            required property var object
             required property int index
 
             QGCMapPolygonVisuals {
                 mapControl: _root.map
-                mapPolygon: modelData.polygon
+                mapPolygon: object.polygon
                 interactive: _root.interactive && index === _root._missionItem.selectedFieldIndex
-                              && !modelData.polygon.traceMode
+                              && !object.polygon.traceMode
                 borderWidth: Math.max(1, ScreenTools.defaultFontPixelWidth * 0.35)
                 borderColor: index === _root._missionItem.selectedFieldIndex ? qgcPal.colorGreen : qgcPal.colorBlue
                 interiorColor: qgcPal.colorBlue
@@ -324,7 +324,7 @@ Item {
             }
 
             MapQuickItem {
-                coordinate: modelData.polygon.center
+                coordinate: object.polygon.center
                 visible: coordinate.isValid
                 z: QGroundControl.zOrderMapItems + 5
                 anchorPoint.x: sourceItem.width / 2
@@ -332,14 +332,14 @@ Item {
 
                 sourceItem: QGCMapLabel {
                     map: _root.map
-                    text: modelData.name
+                    text: object.name
                     color: index === _root._missionItem.selectedFieldIndex ? qgcPal.colorGreen : qgcPal.text
                 }
             }
 
             QGCMapPolylineVisuals {
                 mapControl: _root.map
-                mapPolyline: modelData.transitPolyline
+                mapPolyline: object.transitPolyline
                 interactive: _root.interactive && index === _root._missionItem.selectedFieldIndex
                            && index < _root._fields.count - 1
                 lineWidth: _root.transitSegmentLineWidth
