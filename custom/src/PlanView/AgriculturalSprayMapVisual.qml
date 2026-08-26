@@ -86,9 +86,7 @@ Item {
     MouseArea {
         id: fieldTraceMouseArea
 
-        parent: map
-        x: 0
-        y: 0
+        anchors.fill: parent
         width: map ? map.width : 0
         height: map ? map.height : 0
         enabled: _root.interactive && _root._selectedField && _root._selectedField.polygon.traceMode
@@ -121,6 +119,17 @@ Item {
                             && _root._missionItem.directionEdgeEnd.isValid
                 opacity:    _root.opacity
                 z:          QGroundControl.zOrderMapItems + 1
+            }
+
+            MapPolyline {
+                objectName: "agriculturalSprayFieldTrace"
+                readonly property var tracePath: _root._selectedField ? _root._selectedField.polygon.path : []
+                path: tracePath.length > 2 ? tracePath.concat([tracePath[0]]) : tracePath
+                line.color: qgcPal.colorGreen
+                line.width: ScreenTools.defaultFontPixelWidth * 0.8
+                visible: _root.interactive && _root._selectedField && _root._selectedField.polygon.traceMode
+                opacity: _root.opacity
+                z: QGroundControl.zOrderMapItems + 2
             }
 
             MapItemView {
