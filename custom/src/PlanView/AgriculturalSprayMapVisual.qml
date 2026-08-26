@@ -34,6 +34,7 @@ Item {
                                                : []
     readonly property color sprayLegColor: qgcPal.colorGreen
     readonly property color transitSegmentColor: qgcPal.colorOrange
+    readonly property color nonSprayAreaColor: qgcPal.colorRed
     readonly property real sprayLegWidthMultiplier: 0.5
     readonly property real transitSegmentWidthMultiplier: 0.4
     readonly property real sprayLegLineWidth: ScreenTools.defaultFontPixelWidth * sprayLegWidthMultiplier
@@ -64,7 +65,8 @@ Item {
             segments.push({
                 fromCoordinate: fromCoordinate,
                 toCoordinate: toCoordinate,
-                sprayLeg: segmentTypes[index] === 0
+                sprayLeg: segmentTypes[index] === 0,
+                nonSpray: segmentTypes[index] === 2
             })
         }
         return segments
@@ -220,12 +222,32 @@ Item {
                     required property var modelData
                     required property int index
 
-                    objectName: "agriculturalSprayRouteSegment_" + (modelData.sprayLeg ? "spray_" : "transit_") + index
+                    objectName: "agriculturalSprayRouteSegment_"
+                                + (modelData.nonSpray ? "nonSpray_" : (modelData.sprayLeg ? "spray_" : "transit_"))
+                                + index
                     path:       [modelData.fromCoordinate, modelData.toCoordinate]
-                    line.color: modelData.sprayLeg ? _root.sprayLegColor : _root.transitSegmentColor
+                    line.color: modelData.nonSpray ? _root.nonSprayAreaColor
+                                                  : (modelData.sprayLeg ? _root.sprayLegColor
+                                                                       : _root.transitSegmentColor)
                     line.width: modelData.sprayLeg ? _root.sprayLegLineWidth : _root.transitSegmentLineWidth
                     opacity:    _root.opacity
                     z:          QGroundControl.zOrderWaypointLines
+                }
+            }
+
+            Repeater {
+                model: _root._missionItem ? _root._missionItem.nonSprayPolygons : null
+
+                QGCMapPolygonVisuals {
+                    required property var object
+
+                    mapControl:      _root.map
+                    mapPolygon:      object
+                    interactive:     _root.interactive && object.interactive
+                    borderWidth:     Math.max(1, ScreenTools.defaultFontPixelWidth * 0.25)
+                    borderColor:     _root.nonSprayAreaColor
+                    interiorColor:   _root.nonSprayAreaColor
+                    interiorOpacity: 0.2 * _root.opacity
                 }
             }
 
@@ -236,7 +258,10 @@ Item {
                     required property var modelData
                     required property int index
 
-                    objectName:    "agriculturalSprayRouteArrow_" + (modelData.sprayLeg ? "spray_" : "transit_") + index
+                    objectName:    "agriculturalSprayRouteArrow_"
+                                   + (modelData.nonSpray ? "nonSpray_"
+                                                        : (modelData.sprayLeg ? "spray_" : "transit_"))
+                                   + index
                     fromCoord:     modelData.fromCoordinate
                     toCoord:       modelData.toCoordinate
                     arrowPosition: 3

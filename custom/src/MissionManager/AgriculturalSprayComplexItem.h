@@ -19,6 +19,7 @@ class GeoFenceController;
 class FactMetaData;
 class MissionItem;
 class PlanMasterController;
+class QGCMapPolygon;
 class QGCFenceCircle;
 class QGCFencePolygon;
 class QmlObjectListModel;
@@ -51,6 +52,7 @@ class AgriculturalSprayComplexItem final : public ComplexMissionItem
     Q_PROPERTY(Fact* dropletClass READ dropletClass CONSTANT)
     Q_PROPERTY(Fact* applicationRate READ applicationRate CONSTANT)
     Q_PROPERTY(QVariantList exclusionMarginRows READ exclusionMarginRows NOTIFY exclusionMarginRowsChanged)
+    Q_PROPERTY(QmlObjectListModel* nonSprayPolygons READ nonSprayPolygons CONSTANT)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
@@ -102,6 +104,7 @@ public:
     {
         SprayLeg,
         Transit,
+        NonSpray,
     };
     Q_ENUM(RouteSegmentType)
 
@@ -155,7 +158,11 @@ public:
 
     QVariantList exclusionMarginRows() const;
 
+    QmlObjectListModel* nonSprayPolygons() const { return _nonSprayPolygons; }
+
     Q_INVOKABLE void rebuild();
+    Q_INVOKABLE QObject* addNonSprayPolygon();
+    Q_INVOKABLE void removeNonSprayPolygon(QObject* polygon);
     Q_INVOKABLE void setDirectionVertexIndex(int index);
     Q_INVOKABLE void setMarginEdgeIndex(int index);
     Q_INVOKABLE void toggleMarginEdgeIndex(int index);
@@ -275,6 +282,8 @@ private:
     void _reconnectShapeSignals();
     void _connectPolygonSignals(QGCFencePolygon* polygon);
     void _connectCircleSignals(QGCFenceCircle* circle);
+    void _connectNonSprayPolygon(QGCMapPolygon* polygon);
+    void _nonSprayPolygonChanged();
     void _sourcePolygonTraceModeChanged(QGCFencePolygon* polygon, bool traceMode);
     void _invalidateRoute();
     void _scheduleRebuild();
@@ -294,6 +303,7 @@ private:
     void _normalizeMarginEdgeIndex();
     void _migrateLegacyDirectionSelection();
     void _startPendingPlanner();
+    int _missionItemCount() const;
     double _exclusionMargin(const QObject* shape) const;
     void _pruneExclusionMargins();
 
@@ -338,6 +348,7 @@ private:
     bool _loadedExclusionMarginsPending = false;
     double _loadedExclusionMarginDefault = 1.0;
     double _defaultExclusionMargin = 1.0;
+    QmlObjectListModel* _nonSprayPolygons = nullptr;
 
     QList<QGeoCoordinate> _routeCoordinates;
     QList<int> _routeSegmentTypes;
@@ -361,7 +372,9 @@ private:
     std::optional<PendingPlan> _runningPlan;
     quint64 _plannerRevision = 0;
 
-    static constexpr int _jsonVersion = 6;
+    static constexpr int _jsonVersion = 7;
+    static constexpr int _nonSprayPolygonJsonVersion = 7;
+    static constexpr int _perEdgeMarginJsonVersion = 6;
     static constexpr int _multiEdgeJsonVersion = 5;
     static constexpr int _exclusionMarginJsonVersion = 4;
     static constexpr int _boundaryMarginJsonVersion = 3;
@@ -373,4 +386,5 @@ private:
     static constexpr const char* _marginEdgeIndicesKey = "marginEdgeIndices";
     static constexpr const char* _marginEdgeMarginsKey = "marginEdgeMargins";
     static constexpr const char* _exclusionMarginsKey = "exclusionMargins";
+    static constexpr const char* _nonSprayPolygonsKey = "nonSprayPolygons";
 };
