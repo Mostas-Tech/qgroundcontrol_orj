@@ -16,23 +16,21 @@ Item {
     required property bool interactive
 
     readonly property var _missionItem:  object
-    readonly property var _fields:       _missionItem ? _missionItem.fields : null
-    readonly property var _selectedField: _missionItem ? _missionItem.selectedField : null
     readonly property var _routeSegments: _buildRouteSegments()
     readonly property var _entryCoordinate: _missionItem ? _missionItem.entryCoordinate : QtPositioning.coordinate()
     readonly property var _exitCoordinate:  _missionItem ? _missionItem.exitCoordinate : QtPositioning.coordinate()
-    readonly property bool _showDirectionSelection: interactive && _selectedField
+    readonly property bool _showDirectionSelection: interactive && _missionItem
                                                     && !_missionItem.sourcePolygonTraceMode
-                                                    && _selectedField.polygon.count > 2
+                                                    && _missionItem.sourcePolygonCoordinates.length > 2
     readonly property bool _showMarginEdge: !!(_missionItem && _missionItem.boundaryMargin
                                                && _missionItem.boundaryMarginScope
-                                               && _selectedField && _selectedField.polygon.count > 2
-                                               && _selectedField.boundaryMargin.rawValue > 0
-                                               && _selectedField.boundaryMarginScope.rawValue === 0)
+                                               && _missionItem.sourcePolygonCoordinates.length > 2
+                                               && _missionItem.boundaryMargin.rawValue > 0
+                                               && _missionItem.boundaryMarginScope.rawValue === 0)
     readonly property bool _showMarginSelection: interactive && _showMarginEdge
                                                   && !_missionItem.sourcePolygonTraceMode
-    readonly property var _marginEdgeIndices: _selectedField && _selectedField.marginEdgeIndices
-                                               ? _selectedField.marginEdgeIndices
+    readonly property var _marginEdgeIndices: _missionItem && _missionItem.marginEdgeIndices
+                                               ? _missionItem.marginEdgeIndices
                                                : []
     readonly property color sprayLegColor: qgcPal.colorGreen
     readonly property color transitSegmentColor: qgcPal.colorOrange
@@ -83,26 +81,6 @@ Item {
         id: objectManager
     }
 
-    MouseArea {
-        id: fieldTraceMouseArea
-
-        anchors.fill: parent
-        width: map ? map.width : 0
-        height: map ? map.height : 0
-        enabled: _root.interactive && _root._selectedField && _root._selectedField.polygon.traceMode
-        visible: enabled
-        preventStealing: true
-        acceptedButtons: Qt.LeftButton
-        z: QGroundControl.zOrderMapItems + 10
-
-        onClicked: (mouse) => {
-            if (_root._selectedField && _root._selectedField.polygon.traceMode) {
-                _root._selectedField.polygon.appendVertex(
-                            map.toCoordinate(Qt.point(mouse.x, mouse.y), false /* clipToViewPort */))
-            }
-        }
-    }
-
     Component {
         id: routeViewComponent
 
@@ -121,24 +99,13 @@ Item {
                 z:          QGroundControl.zOrderMapItems + 1
             }
 
-            MapPolyline {
-                objectName: "agriculturalSprayFieldTrace"
-                readonly property var tracePath: _root._selectedField ? _root._selectedField.polygon.path : []
-                path: tracePath.length > 2 ? tracePath.concat([tracePath[0]]) : tracePath
-                line.color: qgcPal.colorGreen
-                line.width: ScreenTools.defaultFontPixelWidth * 0.8
-                visible: _root.interactive && _root._selectedField && _root._selectedField.polygon.traceMode
-                opacity: _root.opacity
-                z: QGroundControl.zOrderMapItems + 2
-            }
-
             MapItemView {
                 model: _root._marginEdgeIndices
 
                 delegate: MapPolyline {
                     required property int modelData
 
-                    readonly property var _coordinates: _root._selectedField.polygon.path
+                    readonly property var _coordinates: _root._missionItem.sourcePolygonCoordinates
 
                     objectName: "agriculturalSprayMarginEdge_" + modelData
                     path:       _coordinates.length > modelData
@@ -165,14 +132,14 @@ Item {
             }
 
             MapItemView {
-                model: _root._selectedField ? _root._selectedField.polygon.path : []
+                model: _root._missionItem ? _root._missionItem.sourcePolygonCoordinates : []
 
                 delegate: MapQuickItem {
                     id: directionVertexMarker
 
                     required property var modelData
                     required property int index
-                    readonly property bool selected: index === _root._selectedField.directionVertexIndex
+                    readonly property bool selected: index === _root._missionItem.directionVertexIndex
 
                     objectName:    "agriculturalSprayDirectionVertex_" + index
                     coordinate:    modelData
@@ -200,14 +167,14 @@ Item {
             }
 
             MapItemView {
-                model: _root._selectedField ? _root._selectedField.polygon.path : []
+                model: _root._missionItem ? _root._missionItem.sourcePolygonCoordinates : []
 
                 delegate: MapQuickItem {
                     id: marginEdgeMarker
 
                     required property var modelData
                     required property int index
-                    readonly property var _coordinates: _root._selectedField.polygon.path
+                    readonly property var _coordinates: _root._missionItem.sourcePolygonCoordinates
                     readonly property var _nextCoordinate: _coordinates.length > 0
                                                                ? _coordinates[(index + 1) % _coordinates.length]
                                                                : QtPositioning.coordinate()
@@ -269,7 +236,7 @@ Item {
             }
 
             Repeater {
-                model: _root._selectedField ? _root._selectedField.nonSprayPolygons : null
+                model: _root._missionItem ? _root._missionItem.nonSprayPolygons : null
 
                 QGCMapPolygonVisuals {
                     required property var object
@@ -301,50 +268,6 @@ Item {
                     opacity:       _root.opacity
                     z:             QGroundControl.zOrderWaypointLines + 1
                 }
-            }
-        }
-    }
-
-    Repeater {
-        model: _root._fields
-
-        delegate: Item {
-            required property var object
-            required property int index
-
-            QGCMapPolygonVisuals {
-                mapControl: _root.map
-                mapPolygon: object.polygon
-                interactive: _root.interactive && index === _root._missionItem.selectedFieldIndex
-                              && !object.polygon.traceMode
-                borderWidth: Math.max(1, ScreenTools.defaultFontPixelWidth * 0.35)
-                borderColor: index === _root._missionItem.selectedFieldIndex ? qgcPal.colorGreen : qgcPal.colorBlue
-                interiorColor: qgcPal.colorBlue
-                interiorOpacity: index === _root._missionItem.selectedFieldIndex ? 0.12 : 0.05
-            }
-
-            MapQuickItem {
-                coordinate: object.polygon.center
-                visible: coordinate.isValid
-                z: QGroundControl.zOrderMapItems + 5
-                anchorPoint.x: sourceItem.width / 2
-                anchorPoint.y: sourceItem.height / 2
-
-                sourceItem: QGCMapLabel {
-                    map: _root.map
-                    text: object.name
-                    color: index === _root._missionItem.selectedFieldIndex ? qgcPal.colorGreen : qgcPal.text
-                }
-            }
-
-            QGCMapPolylineVisuals {
-                mapControl: _root.map
-                mapPolyline: object.transitPolyline
-                interactive: _root.interactive && index === _root._missionItem.selectedFieldIndex
-                           && index < _root._fields.count - 1
-                lineWidth: _root.transitSegmentLineWidth
-                lineColor: _root.transitSegmentColor
-                visible: index < _root._fields.count - 1
             }
         }
     }
