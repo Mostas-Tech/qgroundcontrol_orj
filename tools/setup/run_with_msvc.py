@@ -60,11 +60,11 @@ def _load_msvc_environment() -> dict[str, str]:
         text=True,
     )
 
-    environment = os.environ.copy()
+    environment = {name.upper(): value for name, value in os.environ.items()}
     for line in result.stdout.splitlines():
         name, separator, value = line.partition("=")
         if separator and name:
-            environment[name] = value
+            environment[name.upper()] = value
     return environment
 
 
@@ -89,6 +89,7 @@ def _add_runtime_paths(environment: dict[str, str]) -> None:
                 f"GStreamer plugin directory does not exist: {gstreamer_plugins}"
             )
         runtime_paths.append(str(gstreamer_bin))
+        environment["GSTREAMER_1_0_ROOT_MSVC_X86_64"] = gstreamer_root
         environment["GST_PLUGIN_PATH"] = str(gstreamer_plugins)
 
     if runtime_paths:
