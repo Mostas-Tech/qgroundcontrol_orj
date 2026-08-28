@@ -12,7 +12,6 @@
 #include <optional>
 
 #include "AgriculturalSprayPlanner.h"
-#include "AgriculturalSprayField.h"
 #include "ComplexMissionItem.h"
 #include "Fact.h"
 
@@ -24,6 +23,7 @@ class QGCMapPolygon;
 class QGCFenceCircle;
 class QGCFencePolygon;
 class QmlObjectListModel;
+
 Q_DECLARE_LOGGING_CATEGORY(AgriculturalSprayComplexItemLog)
 
 class AgriculturalSprayComplexItem final : public ComplexMissionItem
@@ -53,12 +53,6 @@ class AgriculturalSprayComplexItem final : public ComplexMissionItem
     Q_PROPERTY(Fact* applicationRate READ applicationRate CONSTANT)
     Q_PROPERTY(QVariantList exclusionMarginRows READ exclusionMarginRows NOTIFY exclusionMarginRowsChanged)
     Q_PROPERTY(QmlObjectListModel* nonSprayPolygons READ nonSprayPolygons CONSTANT)
-    Q_PROPERTY(QmlObjectListModel* fieldPolygons READ fieldPolygons CONSTANT)
-    Q_PROPERTY(QmlObjectListModel* fields READ fields CONSTANT)
-    Q_PROPERTY(AgriculturalSprayField* selectedField READ selectedField NOTIFY selectedFieldChanged)
-    Q_PROPERTY(int selectedFieldIndex READ selectedFieldIndex WRITE setSelectedFieldIndex NOTIFY selectedFieldIndexChanged)
-    Q_PROPERTY(int selectedFieldRow READ selectedFieldRow NOTIFY selectedFieldIndexChanged)
-    Q_PROPERTY(QVariantList fieldRows READ fieldRows NOTIFY fieldRowsChanged)
     Q_PROPERTY(Status status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
     Q_PROPERTY(QString errorText READ errorText NOTIFY errorTextChanged)
@@ -114,21 +108,21 @@ public:
     };
     Q_ENUM(RouteSegmentType)
 
-    Fact* altitude();
+    Fact* altitude() { return &_altitudeFact; }
 
-    Fact* lineSpacing();
+    Fact* lineSpacing() { return &_lineSpacingFact; }
 
-    Fact* gridAngle();
+    Fact* gridAngle() { return &_gridAngleFact; }
 
-    Fact* entryCorner();
+    Fact* entryCorner() { return &_entryCornerFact; }
 
-    Fact* boundaryMargin();
+    Fact* boundaryMargin() { return &_boundaryMarginFact; }
 
-    Fact* boundaryMarginScope();
+    Fact* boundaryMarginScope() { return &_boundaryMarginScopeFact; }
 
-    int directionVertexIndex() const { return selectedField() ? selectedField()->directionVertexIndex() : 0; }
+    int directionVertexIndex() const { return _directionVertexIndex; }
 
-    int marginEdgeIndex() const { return selectedField() ? selectedField()->marginEdgeIndex() : 0; }
+    int marginEdgeIndex() const { return _marginEdgeIndex; }
 
     QVariantList marginEdgeIndices() const;
 
@@ -146,9 +140,9 @@ public:
 
     bool sourcePolygonTraceMode() const;
 
-    Fact* dropletClass();
+    Fact* dropletClass() { return &_dropletClassFact; }
 
-    Fact* applicationRate();
+    Fact* applicationRate() { return &_applicationRateFact; }
 
     Status status() const { return _status; }
 
@@ -164,16 +158,7 @@ public:
 
     QVariantList exclusionMarginRows() const;
 
-    QmlObjectListModel* nonSprayPolygons() const
-    {
-        return selectedField() ? selectedField()->nonSprayPolygons() : _nonSprayPolygons;
-    }
-    QmlObjectListModel* fieldPolygons() const { return _fields; }
-    QmlObjectListModel* fields() const { return _fields; }
-    AgriculturalSprayField* selectedField() const;
-    int selectedFieldIndex() const { return _loadedSourcePolygonIndex; }
-    int selectedFieldRow() const;
-    QVariantList fieldRows() const;
+    QmlObjectListModel* nonSprayPolygons() const { return _nonSprayPolygons; }
 
     Q_INVOKABLE void rebuild();
     Q_INVOKABLE QObject* addNonSprayPolygon();
@@ -183,11 +168,6 @@ public:
     Q_INVOKABLE void toggleMarginEdgeIndex(int index);
     Q_INVOKABLE void setFieldMargin(int index, double margin);
     Q_INVOKABLE void setExclusionMargin(QObject* shape, double margin);
-    Q_INVOKABLE QObject* addField();
-    Q_INVOKABLE void removeField(int index);
-    Q_INVOKABLE void moveField(int from, int to);
-    Q_INVOKABLE void renameField(int index, const QString& name);
-    void setSelectedFieldIndex(int index);
 
     /// Re-snapshots the fully loaded GeoFence without making the mission item dirty.
     void refreshAfterLoad();
@@ -229,10 +209,7 @@ public:
     QGeoCoordinate exitCoordinate() const final;
     bool exitCoordinateSameAsEntry() const final;
 
-    double editableAlt() const final
-    {
-        return selectedField() ? selectedField()->altitude()->rawValue().toDouble() : _altitudeFact.rawValue().toDouble();
-    }
+    double editableAlt() const final { return _altitudeFact.rawValue().toDouble(); }
 
     double amslEntryAlt() const final;
 
@@ -283,9 +260,6 @@ signals:
     void marginEdgeChanged();
     void sourcePolygonTraceModeChanged();
     void exclusionMarginRowsChanged();
-    void selectedFieldIndexChanged();
-    void selectedFieldChanged();
-    void fieldRowsChanged();
 
 protected:
     bool coordinateTerrainAltitudeQueryEnabled() const final { return false; }
@@ -300,11 +274,10 @@ private slots:
 
 private:
     bool _initializeFact(Fact& fact, const char* name);
-    AgriculturalSprayField* _fieldAt(int index) const;
-    bool _validateCurrentFacts(QString& errorText, AgriculturalSprayField* field = nullptr);
+    bool _validateCurrentFacts(QString& errorText);
     bool _validateLoadValue(Fact& fact, const QJsonValue& jsonValue, QVariant& typedValue, QString& errorText);
     bool _snapshotPlannerInput(AgriculturalSpray::PlannerInput& input, QGeoCoordinate& origin, Status& failureStatus,
-                               QString& errorText, AgriculturalSprayField* field = nullptr);
+                               QString& errorText);
     void _connectFenceModels();
     void _reconnectShapeSignals();
     void _connectPolygonSignals(QGCFencePolygon* polygon);
@@ -315,11 +288,8 @@ private:
     void _invalidateRoute();
     void _scheduleRebuild();
     void _clearGeneratedRoute();
-    void _publishPlannerResult(const AgriculturalSpray::PlannerResult& result, const QGeoCoordinate& origin,
-                               int fieldIndex);
-    void _publishSuccessfulRoute(const AgriculturalSpray::PlannerResult& result, const QGeoCoordinate& origin,
-                                 int fieldIndex);
-    void _aggregateFieldRoutes();
+    void _publishPlannerResult(const AgriculturalSpray::PlannerResult& result, const QGeoCoordinate& origin);
+    void _publishSuccessfulRoute(const AgriculturalSpray::PlannerResult& result, const QGeoCoordinate& origin);
     void _setStatus(Status status, const QString& errorText);
     QString _textForStatus(Status status, const QString& errorText) const;
     void _rebuildFlightPathSegments();
@@ -329,8 +299,8 @@ private:
     int _sourcePolygonIndex() const;
     bool _normalizeLoadedDropletClass(QJsonValue jsonValue, QVariant& typedValue, QString& errorText);
     bool _resolveLoadedExclusionMargins(QString& errorText);
-    void _normalizeDirectionVertexIndex(AgriculturalSprayField* field = nullptr);
-    void _normalizeMarginEdgeIndex(AgriculturalSprayField* field = nullptr);
+    void _normalizeDirectionVertexIndex();
+    void _normalizeMarginEdgeIndex();
     void _migrateLegacyDirectionSelection();
     void _startPendingPlanner();
     int _missionItemCount() const;
@@ -341,7 +311,6 @@ private:
     {
         AgriculturalSpray::PlannerInput input;
         QGeoCoordinate origin;
-        int fieldIndex = -1;
         quint64 revision = 0;
     };
 
@@ -355,6 +324,10 @@ private:
     Fact _dropletClassFact;
     Fact _applicationRateFact;
 
+    int _directionVertexIndex = 0;
+    int _marginEdgeIndex = 0;
+    QList<int> _marginEdgeIndices{0};
+    QMap<int, double> _marginEdgeMargins{{0, 1.0}};
     bool _legacyDirectionPending = false;
     bool _loadedDirectionRequiresValidation = false;
     bool _loadedMarginEdgeRequiresValidation = false;
@@ -366,7 +339,6 @@ private:
     QmlObjectListModel* _circleModel = nullptr;
     QPointer<QGCFencePolygon> _sourcePolygon;
     int _loadedSourcePolygonIndex = -1;
-    int _legacySourcePolygonIndex = -1;
     bool _sourcePolygonReferencePresent = false;
     bool _sourcePolygonResolved = false;
     QList<QMetaObject::Connection> _shapeConnections;
@@ -377,7 +349,6 @@ private:
     double _loadedExclusionMarginDefault = 1.0;
     double _defaultExclusionMargin = 1.0;
     QmlObjectListModel* _nonSprayPolygons = nullptr;
-    QmlObjectListModel* _fields = nullptr;
 
     QList<QGeoCoordinate> _routeCoordinates;
     QList<int> _routeSegmentTypes;
@@ -401,7 +372,7 @@ private:
     std::optional<PendingPlan> _runningPlan;
     quint64 _plannerRevision = 0;
 
-    static constexpr int _jsonVersion = 8;
+    static constexpr int _jsonVersion = 7;
     static constexpr int _nonSprayPolygonJsonVersion = 7;
     static constexpr int _perEdgeMarginJsonVersion = 6;
     static constexpr int _multiEdgeJsonVersion = 5;
@@ -416,5 +387,4 @@ private:
     static constexpr const char* _marginEdgeMarginsKey = "marginEdgeMargins";
     static constexpr const char* _exclusionMarginsKey = "exclusionMargins";
     static constexpr const char* _nonSprayPolygonsKey = "nonSprayPolygons";
-    static constexpr const char* _fieldsKey = "fields";
 };

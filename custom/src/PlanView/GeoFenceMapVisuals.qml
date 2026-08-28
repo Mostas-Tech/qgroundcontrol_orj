@@ -6,6 +6,7 @@ import QtPositioning
 import QGroundControl
 import QGroundControl.Controls
 import QGroundControl.FlightMap
+import QGroundControl.PlanView
 
 /// GeoFence map visuals
 Item {
