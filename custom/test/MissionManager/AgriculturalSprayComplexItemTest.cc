@@ -3,6 +3,7 @@
 #include <QtCore/QJsonArray>
 #include <QtCore/QJsonObject>
 #include <QtCore/QRegularExpression>
+#include <QtCore/QScopeGuard>
 #include <QtCore/QTimer>
 #include <QtTest/QSignalSpy>
 #include <limits>
@@ -15,6 +16,7 @@
 #include "MissionItem.h"
 #include "QGCFenceCircle.h"
 #include "QGCFencePolygon.h"
+#include "QGCMapPolygon.h"
 #include "QmlObjectListModel.h"
 #include "SimpleMissionItem.h"
 
@@ -64,6 +66,9 @@ void AgriculturalSprayComplexItemTest::init()
 
 void AgriculturalSprayComplexItemTest::cleanup()
 {
+    if (missionController()->visualItems()->indexOf(_item) >= 0) {
+        missionController()->visualItems()->removeOne(_item);
+    }
     delete _item;
     _item = nullptr;
     OfflineMissionTest::cleanup();
@@ -72,6 +77,268 @@ void AgriculturalSprayComplexItemTest::cleanup()
 void AgriculturalSprayComplexItemTest::directionVertexDefaultsToZero()
 {
     QCOMPARE(_item->directionVertexIndex(), 0);
+    QCOMPARE(_item->marginEdgeIndex(), 0);
+    QCOMPARE(_item->boundaryMargin()->rawValue().toDouble(), 1.0);
+    QCOMPARE(_item->boundaryMarginScope()->rawValue().toUInt(),
+             static_cast<uint>(AgriculturalSprayComplexItem::AllEdges));
+}
+
+void AgriculturalSprayComplexItemTest::marginEdgeSelectionIsIndependentAndNormalizes()
+{
+    _makeReadyWithSquare();
+    _item->setDirectionVertexIndex(1);
+    _item->setMarginEdgeIndex(3);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
+    QCOMPARE(_item->directionVertexIndex(), 1);
+    QCOMPARE(_item->marginEdgeIndex(), 3);
+    QCOMPARE(_item->marginEdgeIndices(), QVariantList{QVariant(3)});
+    QCOMPARE(_item->marginEdgeStart(), _item->sourcePolygonCoordinates().at(3));
+
+    _item->toggleMarginEdgeIndex(1);
+    QCOMPARE(_item->marginEdgeIndices(), QVariantList({QVariant(1), QVariant(3)}));
+    _item->toggleMarginEdgeIndex(1);
+    QCOMPARE(_item->marginEdgeIndices(), QVariantList{QVariant(3)});
+
+    QGCFencePolygon* const polygon = geoFenceController()->polygons()->value<QGCFencePolygon*>(0);
+    QVERIFY(polygon);
+    polygon->removeVertex(3);
+    QCOMPARE(_item->directionVertexIndex(), 1);
+    QCOMPARE(_item->marginEdgeIndex(), 0);
+}
+
+void AgriculturalSprayComplexItemTest::boundaryMarginJsonRoundTripAndMigration()
+{
+    _makeReadyWithSquare();
+    _item->boundaryMargin()->setRawValue(2.25);
+    _item->boundaryMarginScope()->setRawValue(AgriculturalSprayComplexItem::AllEdges);
+    _item->setMarginEdgeIndex(2);
+    _item->toggleMarginEdgeIndex(3);
+    _item->setFieldMargin(2, 3.0);
+    _item->setFieldMargin(3, 1.0);
+    _waitForStatus(AgriculturalSprayComplexItem::Ready);
+
+    QJsonArray savedItems;
+    _item->save(savedItems);
+    QCOMPARE(savedItems.size(), 1);
+    const QJsonObject saved = savedItems.first().toObject();
+    QCOMPARE(saved.value(QStringLiteral("version")).toInt(), 7);
+    QCOMPARE(saved.value(QStringLiteral("BoundaryMargin")).toDouble(), 2.25);
+    QCOMPARE(saved.value(QStringLiteral("BoundaryMarginScope")).toInt(),
+             static_cast<int>(AgriculturalSprayComplexItem::AllEdges));
+    QCOMPARE(saved.value(QStringLiteral("marginEdgeIndex")).toInt(), 3);
+    const QJsonArray savedMarginEdges = saved.value(QStringLiteral("marginEdgeIndices")).toArray();
+    QCOMPARE(savedMarginEdges.size(), 2);
+    QCOMPARE(savedMarginEdges.at(0).toInt(), 2);
+    QCOMPARE(savedMarginEdges.at(1).toInt(), 3);
+    const QJsonArray savedEdgeMargins = saved.value(QStringLiteral("marginEdgeMargins")).toArray();
+    QCOMPARE(savedEdgeMargins.size(), 2);
+    QCOMPARE(savedEdgeMargins.at(0).toDouble(), 3.0);
+    QCOMPARE(savedEdgeMargins.at(1).toDouble(), 1.0);
+    QCOMPARE(saved.value(QStringLiteral("exclusionMargins")).toArray().size(), 0);
+
+    AgriculturalSprayComplexItem loaded(planController(), false);
+    QString errorString;
+    QVERIFY(loaded.load(saved, 7, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(loaded.boundaryMargin()->rawValue().toDouble(), 2.25);
+    QCOMPARE(loaded.boundaryMarginScope()->rawValue().toUInt(),
+             static_cast<uint>(AgriculturalSprayComplexItem::AllEdges));
+    QCOMPARE(loaded.marginEdgeIndex(), 3);
+    QCOMPARE(loaded.marginEdgeIndices(), QVariantList({QVariant(2), QVariant(3)}));
+    QCOMPARE(loaded.fieldMarginRows().at(0).toMap().value(QStringLiteral("margin")).toDouble(), 3.0);
+    QCOMPARE(loaded.fieldMarginRows().at(1).toMap().value(QStringLiteral("margin")).toDouble(), 1.0);
+
+    QJsonObject versionFive = saved;
+    versionFive[QStringLiteral("version")] = 5;
+    versionFive.remove(QStringLiteral("marginEdgeMargins"));
+    versionFive.remove(QStringLiteral("nonSprayPolygons"));
+    AgriculturalSprayComplexItem migratedVersionFive(planController(), false);
+    QVERIFY(migratedVersionFive.load(versionFive, 8, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(migratedVersionFive.fieldMarginRows().at(0).toMap().value(QStringLiteral("margin")).toDouble(), 2.25);
+    QCOMPARE(migratedVersionFive.fieldMarginRows().at(1).toMap().value(QStringLiteral("margin")).toDouble(), 2.25);
+
+    QJsonObject versionFour = saved;
+    versionFour[QStringLiteral("version")] = 4;
+    versionFour.remove(QStringLiteral("marginEdgeIndices"));
+    versionFour.remove(QStringLiteral("marginEdgeMargins"));
+    versionFour.remove(QStringLiteral("nonSprayPolygons"));
+    AgriculturalSprayComplexItem migratedVersionFour(planController(), false);
+    QVERIFY(migratedVersionFour.load(versionFour, 8, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(migratedVersionFour.marginEdgeIndices(), QVariantList{QVariant(3)});
+
+    QJsonObject versionTwo = saved;
+    versionTwo[QStringLiteral("version")] = 2;
+    versionTwo.remove(QStringLiteral("BoundaryMargin"));
+    versionTwo.remove(QStringLiteral("BoundaryMarginScope"));
+    versionTwo.remove(QStringLiteral("marginEdgeIndex"));
+    versionTwo.remove(QStringLiteral("marginEdgeIndices"));
+    versionTwo.remove(QStringLiteral("marginEdgeMargins"));
+    versionTwo.remove(QStringLiteral("exclusionMargins"));
+    versionTwo.remove(QStringLiteral("nonSprayPolygons"));
+    AgriculturalSprayComplexItem migrated(planController(), false);
+    QVERIFY(migrated.load(versionTwo, 8, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(migrated.boundaryMargin()->rawValue().toDouble(), 0.0);
+    QCOMPARE(migrated.boundaryMarginScope()->rawValue().toUInt(),
+             static_cast<uint>(AgriculturalSprayComplexItem::SelectedEdge));
+    QCOMPARE(migrated.marginEdgeIndex(), 0);
+}
+
+void AgriculturalSprayComplexItemTest::exclusionMarginJsonRoundTripAndMigration()
+{
+    const QGeoCoordinate center(47.397742, 8.545594);
+    _makeReadyWithSquare();
+    QGCFencePolygon* const polygon = _addPolygon(false);
+    QVERIFY(polygon);
+    polygon->setPath(square(center.atDistanceAndAzimuth(20.0, 90.0), 12.0));
+    QGCFenceCircle* const circle = _addCircle(false);
+    QVERIFY(circle);
+    circle->setCenter(center.atDistanceAndAzimuth(18.0, 270.0));
+    circle->radius()->setRawValue(4.0);
+
+    const QVariantList defaultRows = _item->exclusionMarginRows();
+    QCOMPARE(defaultRows.size(), 2);
+    QCOMPARE(defaultRows.at(0).toMap().value(QStringLiteral("margin")).toDouble(), 1.0);
+    QCOMPARE(defaultRows.at(1).toMap().value(QStringLiteral("margin")).toDouble(), 1.0);
+
+    _item->setExclusionMargin(polygon, 2.5);
+    _item->setExclusionMargin(circle, 0.0);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+    QCOMPARE(_item->exclusionMarginRows().size(), 2);
+
+    geoFenceController()->polygons()->move(1, 0);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+
+    QJsonArray savedItems;
+    _item->save(savedItems);
+    QCOMPARE(savedItems.size(), 1);
+    const QJsonObject saved = savedItems.first().toObject();
+    QCOMPARE(saved.value(QStringLiteral("version")).toInt(), 7);
+    const QJsonArray margins = saved.value(QStringLiteral("exclusionMargins")).toArray();
+    QCOMPARE(margins.size(), 2);
+    QCOMPARE(margins.at(0).toObject().value(QStringLiteral("shapeType")).toString(), QStringLiteral("polygon"));
+    QCOMPARE(margins.at(0).toObject().value(QStringLiteral("shapeIndex")).toInt(), 0);
+    QCOMPARE(margins.at(0).toObject().value(QStringLiteral("margin")).toDouble(), 2.5);
+    QCOMPARE(margins.at(1).toObject().value(QStringLiteral("shapeType")).toString(), QStringLiteral("circle"));
+    QCOMPARE(margins.at(1).toObject().value(QStringLiteral("shapeIndex")).toInt(), 0);
+    QCOMPARE(margins.at(1).toObject().value(QStringLiteral("margin")).toDouble(), 0.0);
+
+    QJsonObject invalidReference = saved;
+    QJsonArray invalidMargins = margins;
+    QJsonObject changedPolygonMargin = invalidMargins.at(0).toObject();
+    changedPolygonMargin[QStringLiteral("margin")] = 9.0;
+    invalidMargins[0] = changedPolygonMargin;
+    QJsonObject invalidCircleMargin = invalidMargins.at(1).toObject();
+    invalidCircleMargin[QStringLiteral("shapeIndex")] = 99;
+    invalidMargins[1] = invalidCircleMargin;
+    invalidReference[QStringLiteral("exclusionMargins")] = invalidMargins;
+    QString errorString;
+    QVERIFY(_item->load(invalidReference, 7, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::GenerationError, TestTimeout::shortMs());
+    const QVariantList retainedRows = _item->exclusionMarginRows();
+    QCOMPARE(retainedRows.size(), 2);
+    QCOMPARE(retainedRows.at(0).toMap().value(QStringLiteral("margin")).toDouble(), 2.5);
+    QCOMPARE(retainedRows.at(1).toMap().value(QStringLiteral("margin")).toDouble(), 0.0);
+
+    AgriculturalSprayComplexItem* const loaded = new AgriculturalSprayComplexItem(planController(), false);
+    missionController()->visualItems()->append(loaded);
+    const auto loadedGuard = qScopeGuard([this, loaded]() {
+        missionController()->visualItems()->removeOne(loaded);
+        delete loaded;
+    });
+    QVERIFY(loaded->load(saved, 7, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE_TRUE_WAIT(loaded->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+    const QVariantList loadedRows = loaded->exclusionMarginRows();
+    QCOMPARE(loadedRows.size(), 2);
+    QCOMPARE(loadedRows.at(0).toMap().value(QStringLiteral("margin")).toDouble(), 2.5);
+    QCOMPARE(loadedRows.at(1).toMap().value(QStringLiteral("margin")).toDouble(), 0.0);
+
+    QJsonObject versionThree = saved;
+    versionThree[QStringLiteral("version")] = 3;
+    versionThree.remove(QStringLiteral("exclusionMargins"));
+    versionThree.remove(QStringLiteral("marginEdgeIndices"));
+    versionThree.remove(QStringLiteral("marginEdgeMargins"));
+    versionThree.remove(QStringLiteral("nonSprayPolygons"));
+    AgriculturalSprayComplexItem* const migrated = new AgriculturalSprayComplexItem(planController(), false);
+    missionController()->visualItems()->append(migrated);
+    const auto migratedGuard = qScopeGuard([this, migrated]() {
+        missionController()->visualItems()->removeOne(migrated);
+        delete migrated;
+    });
+    QVERIFY(migrated->load(versionThree, 8, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE_TRUE_WAIT(migrated->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+    for (const QVariant& row : migrated->exclusionMarginRows()) {
+        QCOMPARE(row.toMap().value(QStringLiteral("margin")).toDouble(), 0.0);
+    }
+}
+
+void AgriculturalSprayComplexItemTest::exclusionCircleMarginOverflowFailsClosed()
+{
+    const QGeoCoordinate center(47.397742, 8.545594);
+    _makeReadyWithSquare();
+    QGCFenceCircle* const circle = _addCircle(false);
+    QVERIFY(circle);
+    circle->setCenter(center);
+    circle->radius()->setRawValue(std::numeric_limits<double>::max());
+
+    expectLogMessage("qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
+                     QRegularExpression(QStringLiteral("Route input snapshot failed.*radius or margin is invalid")));
+    _item->setExclusionMargin(circle, std::numeric_limits<double>::max());
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::GenerationError, TestTimeout::shortMs());
+    QVERIFY(_item->routeCoordinates().isEmpty());
+    verifyExpectedLogMessage();
+}
+
+void AgriculturalSprayComplexItemTest::exclusionMarginOutsideFenceChangesRoute()
+{
+    const QGeoCoordinate center(47.397742, 8.545594);
+    _makeReadyWithSquare();
+    const QList<QGeoCoordinate> initialRoute = _item->routeCoordinates();
+
+    QGCFenceCircle* const outsideCircle = _addCircle(false);
+    QVERIFY(outsideCircle);
+    outsideCircle->setCenter(center.atDistanceAndAzimuth(41.0, 0.0));
+    outsideCircle->radius()->setRawValue(3.0);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+    QCOMPARE(_item->routeCoordinates(), initialRoute);
+
+    _item->setExclusionMargin(outsideCircle, 15.0);
+    QVERIFY_TRUE_WAIT(
+        _item->status() == AgriculturalSprayComplexItem::Ready && _item->routeCoordinates() != initialRoute,
+        TestTimeout::mediumMs());
+}
+
+void AgriculturalSprayComplexItemTest::boundaryMarginJsonIsStrict()
+{
+    _makeReadyWithSquare();
+    QJsonArray savedItems;
+    _item->save(savedItems);
+    QCOMPARE(savedItems.size(), 1);
+    const QJsonObject saved = savedItems.first().toObject();
+
+    const auto verifyRejected = [this](QJsonObject object) {
+        expectLogMessage(
+            "qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
+            QRegularExpression(QStringLiteral("(JSON validation failed|Boundary margin validation failed)")));
+        AgriculturalSprayComplexItem loaded(planController(), false);
+        QString errorString;
+        QVERIFY(!loaded.load(object, 7, errorString));
+        QVERIFY(!errorString.isEmpty());
+        verifyExpectedLogMessage();
+    };
+
+    QJsonObject missingMargin = saved;
+    missingMargin.remove(QStringLiteral("BoundaryMargin"));
+    verifyRejected(missingMargin);
+
+    QJsonObject fractionalScope = saved;
+    fractionalScope[QStringLiteral("BoundaryMarginScope")] = 0.5;
+    verifyRejected(fractionalScope);
 }
 
 void AgriculturalSprayComplexItemTest::rapidDirectionChangesPublishLatestRoute()
@@ -94,7 +361,123 @@ void AgriculturalSprayComplexItemTest::rapidDirectionChangesPublishLatestRoute()
     QCOMPARE(item->directionVertexIndex(), 2);
     QVERIFY(!item->routeCoordinates().isEmpty());
     QCOMPARE(item->sourcePolygonCoordinates().count(), 4);
-    QVERIFY(item->routeCoordinates().front().distanceTo(item->sourcePolygonCoordinates().at(2)) < 0.05);
+    const QGeoCoordinate routeEntry = item->routeCoordinates().front();
+    const double selectedCornerDistance = routeEntry.distanceTo(item->sourcePolygonCoordinates().at(2));
+    QVERIFY(selectedCornerDistance >= item->boundaryMargin()->rawValue().toDouble());
+    for (int index = 0; index < item->sourcePolygonCoordinates().count(); ++index) {
+        if (index != 2) {
+            QVERIFY(selectedCornerDistance < routeEntry.distanceTo(item->sourcePolygonCoordinates().at(index)));
+        }
+    }
+}
+
+void AgriculturalSprayComplexItemTest::nonSprayAreasSplitSprayStateWithoutRerouting()
+{
+    _makeReadyWithSquare();
+    _item->setSequenceNumber(20);
+    const QList<QGeoCoordinate> originalRoute = _item->routeCoordinates();
+    const double originalDistance = _item->complexDistance();
+
+    int spraySegmentIndex = -1;
+    for (int index = 0; index < _item->routeSegmentTypes().size(); ++index) {
+        if (_item->routeSegmentTypes()[index] == AgriculturalSprayComplexItem::SprayLeg &&
+            originalRoute[index].distanceTo(originalRoute[index + 1]) > 20.0) {
+            spraySegmentIndex = index;
+            break;
+        }
+    }
+    QVERIFY(spraySegmentIndex >= 0);
+    const QGeoCoordinate start = originalRoute[spraySegmentIndex];
+    const QGeoCoordinate end = originalRoute[spraySegmentIndex + 1];
+    const QGeoCoordinate midpoint = start.atDistanceAndAzimuth(start.distanceTo(end) / 2.0, start.azimuthTo(end));
+
+    QGCMapPolygon* const polygon = qobject_cast<QGCMapPolygon*>(_item->addNonSprayPolygon());
+    QVERIFY(polygon);
+    polygon->setPath(square(midpoint, 4.0));
+    polygon->setTraceMode(false);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+
+    QCOMPARE(_item->entryCoordinate(), originalRoute.front());
+    QCOMPARE(_item->exitCoordinate(), originalRoute.back());
+    QCOMPARE(_item->complexDistance(), originalDistance);
+    QVERIFY(_item->routeCoordinates().size() > originalRoute.size());
+    bool foundSplit = false;
+    for (int index = 1; index + 1 < _item->routeSegmentTypes().size(); ++index) {
+        if (_item->routeSegmentTypes()[index - 1] == AgriculturalSprayComplexItem::SprayLeg &&
+            _item->routeSegmentTypes()[index] == AgriculturalSprayComplexItem::NonSpray &&
+            _item->routeSegmentTypes()[index + 1] == AgriculturalSprayComplexItem::SprayLeg) {
+            foundSplit = true;
+            break;
+        }
+    }
+    QVERIFY(foundSplit);
+
+    QList<MissionItem*> missionItems;
+    _item->appendMissionItems(missionItems, this);
+    QCOMPARE(_item->lastSequenceNumber(), 20 + missionItems.size() - 1);
+    QList<int> relayStates;
+    for (int index = 0; index < missionItems.size(); ++index) {
+        QCOMPARE(missionItems[index]->sequenceNumber(), 20 + index);
+        if (static_cast<MAV_CMD>(missionItems[index]->command()) == MAV_CMD_DO_SET_RELAY) {
+            QCOMPARE(missionItems[index]->param1(), 0.0);
+            relayStates.append(static_cast<int>(missionItems[index]->param2()));
+        }
+    }
+    bool foundPauseAndResume = false;
+    for (int index = 1; index + 1 < relayStates.size(); ++index) {
+        if (relayStates[index - 1] == 1 && relayStates[index] == 0 && relayStates[index + 1] == 1) {
+            foundPauseAndResume = true;
+            break;
+        }
+    }
+    QVERIFY(foundPauseAndResume);
+    QCOMPARE(relayStates.back(), 0);
+}
+
+void AgriculturalSprayComplexItemTest::nonSprayJsonRoundTripIsStrictAndTransactional()
+{
+    _makeReadyWithSquare();
+    QGCMapPolygon* const polygon = qobject_cast<QGCMapPolygon*>(_item->addNonSprayPolygon());
+    QVERIFY(polygon);
+    polygon->setPath(square(QGeoCoordinate(47.397742, 8.545594), 8.0));
+    polygon->setTraceMode(false);
+    QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::mediumMs());
+
+    QJsonArray savedItems;
+    _item->save(savedItems);
+    QCOMPARE(savedItems.size(), 1);
+    const QJsonObject saved = savedItems.first().toObject();
+    QCOMPARE(saved.value(QStringLiteral("version")).toInt(), 7);
+    QCOMPARE(saved.value(QStringLiteral("nonSprayPolygons")).toArray().size(), 1);
+
+    AgriculturalSprayComplexItem loaded(planController(), false);
+    QString errorString;
+    QVERIFY(loaded.load(saved, 7, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(loaded.nonSprayPolygons()->count(), 1);
+    const QGCMapPolygon* const loadedPolygon = loaded.nonSprayPolygons()->value<QGCMapPolygon*>(0);
+    QVERIFY(loadedPolygon);
+    QCOMPARE(loadedPolygon->coordinateList(), polygon->coordinateList());
+
+    QJsonObject versionSix = saved;
+    versionSix[QStringLiteral("version")] = 6;
+    versionSix.remove(QStringLiteral("nonSprayPolygons"));
+    AgriculturalSprayComplexItem migrated(planController(), false);
+    QVERIFY(migrated.load(versionSix, 7, errorString));
+    QVERIFY(errorString.isEmpty());
+    QCOMPARE(migrated.nonSprayPolygons()->count(), 0);
+
+    QJsonObject invalid = saved;
+    QJsonArray invalidPolygons = invalid.value(QStringLiteral("nonSprayPolygons")).toArray();
+    QJsonObject invalidPolygon = invalidPolygons.first().toObject();
+    invalidPolygon[QStringLiteral("unexpected")] = true;
+    invalidPolygons[0] = invalidPolygon;
+    invalid[QStringLiteral("nonSprayPolygons")] = invalidPolygons;
+    QGCMapPolygon* const retainedPolygon = _item->nonSprayPolygons()->value<QGCMapPolygon*>(0);
+    QVERIFY(!_item->load(invalid, 20, errorString));
+    QVERIFY(!errorString.isEmpty());
+    QCOMPARE(_item->nonSprayPolygons()->count(), 1);
+    QCOMPARE(_item->nonSprayPolygons()->value<QGCMapPolygon*>(0), retainedPolygon);
 }
 
 QGCFencePolygon* AgriculturalSprayComplexItemTest::_addPolygon(bool inclusion)
@@ -132,6 +515,9 @@ void AgriculturalSprayComplexItemTest::_waitForStatus(AgriculturalSprayComplexIt
 
 void AgriculturalSprayComplexItemTest::_makeReadyWithSquare()
 {
+    if (missionController()->visualItems()->indexOf(_item) < 0) {
+        missionController()->visualItems()->append(_item);
+    }
     _item->beginInteractiveCreation();
     QGCFencePolygon* const polygon =
         geoFenceController()->polygons()->value<QGCFencePolygon*>(geoFenceController()->polygons()->count() - 1);
@@ -151,7 +537,15 @@ void AgriculturalSprayComplexItemTest::_factMetadataAndAreaStates()
     verifyFact(_item->lineSpacing(), 10.0, 0.1, std::numeric_limits<double>::max(), QStringLiteral("m"));
     QVERIFY(_item->lineSpacing()->metaData()->maxIsDefaultForType());
     verifyFact(_item->gridAngle(), 0.0, -360.0, 360.0, QStringLiteral("deg"));
+    verifyFact(_item->boundaryMargin(), 1.0, 0.0, std::numeric_limits<double>::max(), QStringLiteral("m"));
     verifyFact(_item->applicationRate(), 1.0, 0.1, 100.0, QStringLiteral("L/da"));
+
+    Fact* const boundaryMarginScope = _item->boundaryMarginScope();
+    QVERIFY(boundaryMarginScope->metaData());
+    QCOMPARE(boundaryMarginScope->rawValue().toUInt(), static_cast<uint>(AgriculturalSprayComplexItem::AllEdges));
+    QCOMPARE(boundaryMarginScope->enumStrings(),
+             QStringList({QStringLiteral("Selected Edge"), QStringLiteral("All Edges")}));
+    QCOMPARE(boundaryMarginScope->enumValues(), QVariantList({0, 1}));
 
     Fact* const entryCorner = _item->entryCorner();
     QVERIFY(entryCorner->metaData());
@@ -258,9 +652,21 @@ void AgriculturalSprayComplexItemTest::_planningInputsAndMetadataOnlyInputs()
         TestTimeout::shortMs());
     const QList<QGeoCoordinate> spacingRoute = _item->routeCoordinates();
 
-    _item->gridAngle()->setRawValue(45.0);
+    _item->boundaryMargin()->setRawValue(2.0);
     QVERIFY_TRUE_WAIT(
         _item->status() == AgriculturalSprayComplexItem::Ready && _item->routeCoordinates() != spacingRoute,
+        TestTimeout::shortMs());
+    const QList<QGeoCoordinate> marginRoute = _item->routeCoordinates();
+
+    _item->boundaryMarginScope()->setRawValue(AgriculturalSprayComplexItem::AllEdges);
+    QVERIFY_TRUE_WAIT(
+        _item->status() == AgriculturalSprayComplexItem::Ready && _item->routeCoordinates() != marginRoute,
+        TestTimeout::shortMs());
+    const QList<QGeoCoordinate> marginScopeRoute = _item->routeCoordinates();
+
+    _item->gridAngle()->setRawValue(45.0);
+    QVERIFY_TRUE_WAIT(
+        _item->status() == AgriculturalSprayComplexItem::Ready && _item->routeCoordinates() != marginScopeRoute,
         TestTimeout::shortMs());
     const QList<QGeoCoordinate> angledRoute = _item->routeCoordinates();
 
@@ -369,7 +775,10 @@ void AgriculturalSprayComplexItemTest::_jsonRoundTripIsStrictAndSelfContained()
     _makeReadyWithSquare();
     _item->altitude()->setRawValue(60.0);
     _item->lineSpacing()->setRawValue(12.5);
+    _item->boundaryMargin()->setRawValue(2.25);
+    _item->boundaryMarginScope()->setRawValue(AgriculturalSprayComplexItem::AllEdges);
     _item->setDirectionVertexIndex(2);
+    _item->setMarginEdgeIndex(1);
     _item->dropletClass()->setRawValue(AgriculturalSprayComplexItem::Fine);
     _item->applicationRate()->setRawValue(2.5);
     _waitForStatus(AgriculturalSprayComplexItem::Ready);
@@ -378,12 +787,15 @@ void AgriculturalSprayComplexItemTest::_jsonRoundTripIsStrictAndSelfContained()
     _item->save(savedItems);
     QCOMPARE(savedItems.size(), 1);
     const QJsonObject saved = savedItems.first().toObject();
-    QCOMPARE(saved.value(QStringLiteral("version")).toInt(), 2);
-    QCOMPARE(saved.size(), 9);
+    QCOMPARE(saved.value(QStringLiteral("version")).toInt(), 7);
+    QCOMPARE(saved.size(), 16);
     for (const QString& key :
          {QStringLiteral("version"), QStringLiteral("type"), QStringLiteral("complexItemType"),
-          QStringLiteral("Altitude"), QStringLiteral("LineSpacing"), QStringLiteral("directionVertexIndex"),
-          QStringLiteral("DropletClass"), QStringLiteral("ApplicationRate"), QStringLiteral("sourcePolygonIndex")}) {
+          QStringLiteral("Altitude"), QStringLiteral("LineSpacing"), QStringLiteral("BoundaryMargin"),
+          QStringLiteral("BoundaryMarginScope"), QStringLiteral("directionVertexIndex"),
+          QStringLiteral("marginEdgeIndex"), QStringLiteral("marginEdgeIndices"), QStringLiteral("marginEdgeMargins"),
+          QStringLiteral("DropletClass"), QStringLiteral("ApplicationRate"), QStringLiteral("sourcePolygonIndex"),
+          QStringLiteral("exclusionMargins"), QStringLiteral("nonSprayPolygons")}) {
         QVERIFY2(saved.contains(key), qPrintable(key));
     }
     QVERIFY(!saved.contains(QStringLiteral("GridAngle")));
@@ -396,7 +808,11 @@ void AgriculturalSprayComplexItemTest::_jsonRoundTripIsStrictAndSelfContained()
     QCOMPARE_TRUE_WAIT(loaded.status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
     QCOMPARE(loaded.altitude()->rawValue().toDouble(), 60.0);
     QCOMPARE(loaded.lineSpacing()->rawValue().toDouble(), 12.5);
+    QCOMPARE(loaded.boundaryMargin()->rawValue().toDouble(), 2.25);
+    QCOMPARE(loaded.boundaryMarginScope()->rawValue().toUInt(),
+             static_cast<uint>(AgriculturalSprayComplexItem::AllEdges));
     QCOMPARE(loaded.directionVertexIndex(), 2);
+    QCOMPARE(loaded.marginEdgeIndex(), 1);
     QCOMPARE(loaded.dropletClass()->rawValue().toUInt(), static_cast<uint>(AgriculturalSprayComplexItem::Fine));
     QCOMPARE(loaded.applicationRate()->rawValue().toDouble(), 2.5);
 }
@@ -444,6 +860,10 @@ void AgriculturalSprayComplexItemTest::_legacySourcePolygonReferenceBindsWithWar
     QVERIFY(errorString.isEmpty());
     QCOMPARE_TRUE_WAIT(_item->status(), AgriculturalSprayComplexItem::Ready, TestTimeout::shortMs());
     verifyExpectedLogMessage();
+    QCOMPARE(_item->boundaryMargin()->rawValue().toDouble(), 0.0);
+    QCOMPARE(_item->boundaryMarginScope()->rawValue().toUInt(),
+             static_cast<uint>(AgriculturalSprayComplexItem::SelectedEdge));
+    QCOMPARE(_item->marginEdgeIndex(), 0);
 
     QJsonArray savedItems;
     _item->save(savedItems);
@@ -577,7 +997,7 @@ void AgriculturalSprayComplexItemTest::_invalidJson_data()
     QTest::newRow("unexpected-route-field") << object;
 
     object = valid;
-    object[QStringLiteral("version")] = 3;
+    object[QStringLiteral("version")] = 8;
     QTest::newRow("unsupported-version") << object;
 
     object = valid;
@@ -599,7 +1019,7 @@ void AgriculturalSprayComplexItemTest::_invalidJson()
 
     expectLogMessage("qgc.custom.agriculturalspraycomplexitem", QtWarningMsg,
                      QRegularExpression(QStringLiteral(
-                         "(JSON validation failed|JSON Fact validation failed|version 3 is not supported)")));
+                         "(JSON validation failed|JSON Fact validation failed|version 8 is not supported)")));
     AgriculturalSprayComplexItem loaded(planController(), false);
     QString errorString;
     QVERIFY(!loaded.load(object, 7, errorString));

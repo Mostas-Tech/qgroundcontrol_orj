@@ -21,6 +21,11 @@ private slots:
     void _circleInclusionIsConservative();
     void _entryCorner_data();
     void _entryCorner();
+    void _boundaryMarginZeroPreservesRoute();
+    void _selectedEdgeBoundaryMargin();
+    void _allEdgesBoundaryMarginIsConcaveAndDeterministic();
+    void _excessiveBoundaryMarginIsEmpty();
+    void _exclusionMarginsAreConservative();
     void _failureIsFailClosed_data();
     void _failureIsFailClosed();
     void _inputOrderAndWindingAreDeterministic();

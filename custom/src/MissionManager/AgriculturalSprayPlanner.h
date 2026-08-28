@@ -36,6 +36,12 @@ enum class EntryCorner
     BottomRight,
 };
 
+enum class BoundaryMarginScope
+{
+    SelectedEdge,
+    AllEdges,
+};
+
 /// Limits prevent unbounded work from untrusted planning input.
 struct PlannerLimits
 {
@@ -67,9 +73,16 @@ struct PlannerInput
 {
     std::vector<Shape> inclusions;
     std::vector<Shape> exclusions;
+    /// Optional per-exclusion safety margins in metres. Empty preserves legacy behavior.
+    std::vector<double> exclusionMargins;
     double spacing = 0.0;
     double gridAngleDegrees = 0.0;
     double circleChordError = 0.05;
+    double boundaryMargin = 0.0;
+    BoundaryMarginScope boundaryMarginScope = BoundaryMarginScope::SelectedEdge;
+    std::size_t marginEdgeIndex = 0;
+    std::vector<std::size_t> marginEdgeIndices;
+    std::vector<double> marginEdgeMargins;
     /// New corner-driven input. When both values are present, they replace gridAngleDegrees/entryCorner.
     std::optional<Point> entryPoint;
     std::optional<Point> sweepDirection;
@@ -105,6 +118,7 @@ enum class PlannerStatus
     InvalidInput,
     ComplexityLimit,
     EmptyRegion,
+    EmptyEffectiveArea,
     DisconnectedRegion,
     NoRoute,
 };

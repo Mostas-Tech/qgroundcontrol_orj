@@ -1,5 +1,10 @@
 #include "AgriculturalSprayPlanner.h"
 
+#include <QtCore/QList>
+#include <QtCore/QPointF>
+#include <QtGui/QPainterPath>
+#include <QtGui/QPainterPathStroker>
+#include <QtGui/QPolygonF>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -144,6 +149,16 @@ struct Roadmap
     return false;
 }
 
+[[nodiscard]] bool validBoundaryMarginScope(BoundaryMarginScope scope)
+{
+    switch (scope) {
+        case BoundaryMarginScope::SelectedEdge:
+        case BoundaryMarginScope::AllEdges:
+            return true;
+    }
+    return false;
+}
+
 [[nodiscard]] double coordinateMagnitude(std::initializer_list<Point> points)
 {
     double magnitude = 1.0;
@@ -282,6 +297,288 @@ struct Roadmap
     return true;
 }
 
+enum class BoundaryMarginStatus
+{
+    Applied,
+    InvalidInput,
+    ComplexityLimit,
+    EmptyEffectiveArea,
+};
+
+struct BoundaryMarginResult
+{
+    BoundaryMarginStatus status = BoundaryMarginStatus::InvalidInput;
+    std::vector<Shape> inclusions;
+    std::string error;
+};
+
+struct ExclusionMarginResult
+{
+    BoundaryMarginStatus status = BoundaryMarginStatus::InvalidInput;
+    std::vector<Shape> exclusions;
+    std::string error;
+};
+
+[[nodiscard]] QPainterPath polygonPath(const Polygon& polygon)
+{
+    QPainterPath path;
+    path.setFillRule(Qt::WindingFill);
+    path.moveTo(polygon.vertices.front().north, polygon.vertices.front().east);
+    for (std::size_t index = 1; index < polygon.vertices.size(); ++index) {
+        path.lineTo(polygon.vertices[index].north, polygon.vertices[index].east);
+    }
+    path.closeSubpath();
+    return path;
+}
+
+[[nodiscard]] QPainterPath selectedEdgeMarginPath(const Polygon& polygon, std::size_t edgeIndex, double margin)
+{
+    const Point& first = polygon.vertices[edgeIndex];
+    const Point& second = polygon.vertices[(edgeIndex + 1) % polygon.vertices.size()];
+    const Point edge = second - first;
+    const double edgeLength = length(edge);
+    const Point direction = edge * (1.0 / edgeLength);
+    const double orientationSign = signedArea(polygon.vertices) >= 0.0 ? 1.0 : -1.0;
+    const Point inwardNormal{-orientationSign * direction.east, orientationSign * direction.north};
+    const double boundaryAcross = dot(first, inwardNormal) + margin;
+
+    double minimumAlong = std::numeric_limits<double>::infinity();
+    double maximumAlong = -std::numeric_limits<double>::infinity();
+    double maximumAcross = -std::numeric_limits<double>::infinity();
+    for (const Point& vertex : polygon.vertices) {
+        minimumAlong = std::min(minimumAlong, dot(vertex, direction));
+        maximumAlong = std::max(maximumAlong, dot(vertex, direction));
+        maximumAcross = std::max(maximumAcross, dot(vertex, inwardNormal));
+    }
+    if (maximumAcross <= boundaryAcross + DISTANCE_EPSILON) {
+        return {};
+    }
+
+    const double padding = std::max({1.0, maximumAlong - minimumAlong, maximumAcross - boundaryAcross, margin});
+    const auto framePoint = [&direction, &inwardNormal](double along, double across) {
+        return direction * along + inwardNormal * across;
+    };
+    const Point firstBoundary = framePoint(minimumAlong - padding, boundaryAcross);
+    const Point secondBoundary = framePoint(maximumAlong + padding, boundaryAcross);
+    const Point secondInside = framePoint(maximumAlong + padding, maximumAcross + padding);
+    const Point firstInside = framePoint(minimumAlong - padding, maximumAcross + padding);
+
+    QPainterPath path;
+    path.moveTo(firstBoundary.north, firstBoundary.east);
+    path.lineTo(secondBoundary.north, secondBoundary.east);
+    path.lineTo(secondInside.north, secondInside.east);
+    path.lineTo(firstInside.north, firstInside.east);
+    path.closeSubpath();
+    return path;
+}
+
+[[nodiscard]] std::vector<Point> polygonPoints(const QPolygonF& polygon)
+{
+    std::vector<Point> points;
+    points.reserve(static_cast<std::size_t>(polygon.size()));
+    for (const QPointF& point : polygon) {
+        const Point candidate{point.x(), point.y()};
+        if (points.empty() || !samePoint(points.back(), candidate)) {
+            points.push_back(candidate);
+        }
+    }
+    if (points.size() > 1 && samePoint(points.front(), points.back())) {
+        points.pop_back();
+    }
+    if (points.size() >= 3 && signedArea(points) < 0.0) {
+        std::reverse(points.begin(), points.end());
+    }
+    if (!points.empty()) {
+        const auto minimum = std::min_element(points.begin(), points.end(), [](const Point& left, const Point& right) {
+            return left.north == right.north ? left.east < right.east : left.north < right.north;
+        });
+        std::rotate(points.begin(), minimum, points.end());
+    }
+    return points;
+}
+
+[[nodiscard]] BoundaryMarginResult applyBoundaryMargin(const PlannerInput& input)
+{
+    if (input.inclusions.size() != 1) {
+        return {
+            BoundaryMarginStatus::InvalidInput, {}, "boundary margin requires exactly one source inclusion polygon"};
+    }
+    const Polygon* const sourcePolygon = std::get_if<Polygon>(&input.inclusions.front());
+    if (!sourcePolygon) {
+        return {BoundaryMarginStatus::InvalidInput, {}, "boundary margin requires a source polygon"};
+    }
+    std::string validationError;
+    if (!validPolygon(*sourcePolygon, input.limits, validationError)) {
+        return {BoundaryMarginStatus::InvalidInput, {}, std::move(validationError)};
+    }
+    const QPainterPath sourcePath = polygonPath(*sourcePolygon);
+    QPainterPath effectivePath;
+    if (input.boundaryMarginScope == BoundaryMarginScope::SelectedEdge) {
+        const std::vector<std::size_t> edgeIndices =
+            input.marginEdgeIndices.empty() ? std::vector<std::size_t>{input.marginEdgeIndex} : input.marginEdgeIndices;
+        if (!input.marginEdgeMargins.empty() && input.marginEdgeMargins.size() != edgeIndices.size()) {
+            return {BoundaryMarginStatus::InvalidInput, {}, "boundary margin edge value count does not match"};
+        }
+        effectivePath = sourcePath;
+        for (std::size_t position = 0; position < edgeIndices.size(); ++position) {
+            const std::size_t edgeIndex = edgeIndices[position];
+            const double edgeMargin =
+                input.marginEdgeMargins.empty() ? input.boundaryMargin : input.marginEdgeMargins[position];
+            if (!finiteCoordinate(edgeMargin) || edgeMargin < 0.0) {
+                return {BoundaryMarginStatus::InvalidInput, {}, "boundary margin edge value is invalid"};
+            }
+            if (edgeIndex >= sourcePolygon->vertices.size()) {
+                return {
+                    BoundaryMarginStatus::InvalidInput, {}, "boundary margin edge index is outside the source polygon"};
+            }
+            if (edgeMargin <= DISTANCE_EPSILON) {
+                continue;
+            }
+            const QPainterPath marginPath = selectedEdgeMarginPath(*sourcePolygon, edgeIndex, edgeMargin);
+            if (marginPath.isEmpty()) {
+                return {BoundaryMarginStatus::EmptyEffectiveArea,
+                        {},
+                        "selected-edge boundary margin leaves no valid effective area"};
+            }
+            effectivePath = effectivePath.intersected(marginPath).simplified();
+            if (effectivePath.isEmpty()) {
+                return {BoundaryMarginStatus::EmptyEffectiveArea,
+                        {},
+                        "selected-edge boundary margin leaves no valid effective area"};
+            }
+        }
+    } else {
+        QPainterPathStroker stroker;
+        stroker.setWidth(input.boundaryMargin * 2.0);
+        stroker.setCapStyle(Qt::FlatCap);
+        stroker.setJoinStyle(Qt::MiterJoin);
+        stroker.setMiterLimit(static_cast<qreal>(input.limits.maxShapeVertices));
+        effectivePath = sourcePath.subtracted(stroker.createStroke(sourcePath));
+    }
+
+    const QList<QPolygonF> pathPolygons = effectivePath.toSubpathPolygons();
+    if (pathPolygons.isEmpty()) {
+        return {BoundaryMarginStatus::EmptyEffectiveArea, {}, "boundary margin leaves no effective area"};
+    }
+    if (static_cast<std::size_t>(pathPolygons.size()) + input.exclusions.size() > input.limits.maxShapes) {
+        return {BoundaryMarginStatus::ComplexityLimit,
+                {},
+                "boundary margin produces more effective polygons than the shape limit"};
+    }
+
+    std::vector<Polygon> polygons;
+    polygons.reserve(static_cast<std::size_t>(pathPolygons.size()));
+    for (const QPolygonF& pathPolygon : pathPolygons) {
+        Polygon polygon{polygonPoints(pathPolygon)};
+        if (polygon.vertices.size() < 3) {
+            continue;
+        }
+        if (polygon.vertices.size() > input.limits.maxShapeVertices) {
+            return {BoundaryMarginStatus::ComplexityLimit, {}, "boundary margin polygon exceeds the vertex limit"};
+        }
+        std::string error;
+        if (!validPolygon(polygon, input.limits, error)) {
+            return {BoundaryMarginStatus::InvalidInput,
+                    {},
+                    "boundary margin produced invalid effective geometry: " + error};
+        }
+        polygons.push_back(std::move(polygon));
+    }
+    if (polygons.empty()) {
+        return {BoundaryMarginStatus::EmptyEffectiveArea, {}, "boundary margin leaves no effective area"};
+    }
+    std::sort(polygons.begin(), polygons.end(), [](const Polygon& left, const Polygon& right) {
+        const Point& leftMinimum = left.vertices.front();
+        const Point& rightMinimum = right.vertices.front();
+        return leftMinimum.north == rightMinimum.north ? leftMinimum.east < rightMinimum.east
+                                                       : leftMinimum.north < rightMinimum.north;
+    });
+
+    std::vector<Shape> inclusions;
+    inclusions.reserve(polygons.size());
+    for (Polygon& polygon : polygons) {
+        inclusions.emplace_back(std::move(polygon));
+    }
+    return {BoundaryMarginStatus::Applied, std::move(inclusions), {}};
+}
+
+[[nodiscard]] ExclusionMarginResult applyExclusionMargins(const PlannerInput& input)
+{
+    if (input.exclusionMargins.empty()) {
+        return {BoundaryMarginStatus::Applied, input.exclusions, {}};
+    }
+    if (input.exclusionMargins.size() != input.exclusions.size()) {
+        return {BoundaryMarginStatus::InvalidInput, {}, "exclusion margin count does not match exclusion count"};
+    }
+
+    std::vector<Shape> exclusions;
+    exclusions.reserve(input.exclusions.size());
+    for (std::size_t index = 0; index < input.exclusions.size(); ++index) {
+        const double margin = input.exclusionMargins[index];
+        if (!finiteCoordinate(margin) || margin < 0.0) {
+            return {BoundaryMarginStatus::InvalidInput, {}, "exclusion margin is invalid"};
+        }
+        if (margin <= DISTANCE_EPSILON) {
+            exclusions.push_back(input.exclusions[index]);
+            continue;
+        }
+
+        if (const auto* polygon = std::get_if<Polygon>(&input.exclusions[index])) {
+            std::string validationError;
+            if (!validPolygon(*polygon, input.limits, validationError)) {
+                return {BoundaryMarginStatus::InvalidInput, {}, std::move(validationError)};
+            }
+
+            const QPainterPath sourcePath = polygonPath(*polygon);
+            QPainterPathStroker stroker;
+            stroker.setWidth(margin * 2.0);
+            stroker.setCapStyle(Qt::FlatCap);
+            stroker.setJoinStyle(Qt::MiterJoin);
+            stroker.setMiterLimit(static_cast<qreal>(input.limits.maxShapeVertices));
+            const QList<QPolygonF> pathPolygons =
+                sourcePath.united(stroker.createStroke(sourcePath)).toSubpathPolygons();
+            if (pathPolygons.isEmpty()) {
+                return {BoundaryMarginStatus::InvalidInput, {}, "exclusion margin produced empty geometry"};
+            }
+            for (const QPolygonF& pathPolygon : pathPolygons) {
+                Polygon expanded{polygonPoints(pathPolygon)};
+                if (expanded.vertices.size() < 3) {
+                    continue;
+                }
+                if (expanded.vertices.size() > input.limits.maxShapeVertices) {
+                    return {
+                        BoundaryMarginStatus::ComplexityLimit, {}, "exclusion margin polygon exceeds the vertex limit"};
+                }
+                std::string expandedError;
+                if (!validPolygon(expanded, input.limits, expandedError)) {
+                    return {BoundaryMarginStatus::InvalidInput,
+                            {},
+                            "exclusion margin produced invalid geometry: " + expandedError};
+                }
+                exclusions.emplace_back(std::move(expanded));
+            }
+        } else {
+            Circle circle = std::get<Circle>(input.exclusions[index]);
+            circle.radius += margin;
+            if (!finiteCoordinate(circle.radius) || circle.radius <= DISTANCE_EPSILON) {
+                return {BoundaryMarginStatus::InvalidInput, {}, "exclusion circle margin is invalid"};
+            }
+            exclusions.emplace_back(circle);
+        }
+
+        if (input.inclusions.size() + exclusions.size() > input.limits.maxShapes) {
+            return {BoundaryMarginStatus::ComplexityLimit,
+                    {},
+                    "exclusion margins produce more shapes than the planner limit"};
+        }
+    }
+
+    if (exclusions.empty() && !input.exclusions.empty()) {
+        return {BoundaryMarginStatus::InvalidInput, {}, "exclusion margins produced no valid geometry"};
+    }
+    return {BoundaryMarginStatus::Applied, std::move(exclusions), {}};
+}
+
 [[nodiscard]] std::optional<std::size_t> circleSegmentCount(double radius, double chordError, bool inclusion)
 {
     if (!finiteCoordinate(radius) || !finiteCoordinate(chordError) || radius <= DISTANCE_EPSILON || chordError <= 0.0) {
@@ -374,8 +671,10 @@ struct Roadmap
     return shape;
 }
 
-[[nodiscard]] bool prepareShapes(const PlannerInput& input, PreparedInput& prepared, std::string& error)
+[[nodiscard]] bool prepareShapes(const PlannerInput& input, PreparedInput& prepared, PlannerStatus& failureStatus,
+                                 std::string& error)
 {
+    failureStatus = PlannerStatus::InvalidInput;
     const bool hasCornerEntry = input.entryPoint.has_value() || input.sweepDirection.has_value();
     const bool validCornerEntry = input.entryPoint && input.sweepDirection && finitePoint(*input.entryPoint) &&
                                   finitePoint(*input.sweepDirection) &&
@@ -388,13 +687,14 @@ struct Roadmap
     if (!finiteCoordinate(input.spacing) || input.spacing <= DISTANCE_EPSILON ||
         !finiteCoordinate(input.gridAngleDegrees) || std::abs(input.gridAngleDegrees) > 360.0 ||
         !finiteCoordinate(input.circleChordError) || input.circleChordError <= 0.0 ||
-        !validEntryCorner(input.entryCorner) || (hasCornerEntry && !validCornerEntry) ||
-        !finiteCoordinate(cost.spraySpeed) || cost.spraySpeed <= 0.0 || !finiteCoordinate(cost.transitSpeed) ||
-        cost.transitSpeed <= 0.0 || !finiteCoordinate(cost.acceleration) || cost.acceleration <= 0.0 ||
-        !finiteCoordinate(cost.yawRateDegrees) || cost.yawRateDegrees <= 0.0 ||
+        !finiteCoordinate(input.boundaryMargin) || input.boundaryMargin < 0.0 ||
+        !validBoundaryMarginScope(input.boundaryMarginScope) || !validEntryCorner(input.entryCorner) ||
+        (hasCornerEntry && !validCornerEntry) || !finiteCoordinate(cost.spraySpeed) || cost.spraySpeed <= 0.0 ||
+        !finiteCoordinate(cost.transitSpeed) || cost.transitSpeed <= 0.0 || !finiteCoordinate(cost.acceleration) ||
+        cost.acceleration <= 0.0 || !finiteCoordinate(cost.yawRateDegrees) || cost.yawRateDegrees <= 0.0 ||
         !finiteCoordinate(cost.yawThresholdDegrees) || cost.yawThresholdDegrees < 0.0 ||
         !finiteCoordinate(cost.yawSettleSeconds) || cost.yawSettleSeconds < 0.0) {
-        error = "spacing, direction, circle chord error, entry corner, or route cost model is invalid";
+        error = "spacing, direction, boundary margin, entry corner, or route cost model is invalid";
         return false;
     }
     if (input.inclusions.size() + input.exclusions.size() > input.limits.maxShapes || input.limits.maxShapes == 0 ||
@@ -415,6 +715,30 @@ struct Roadmap
     }
     prepared.frame.normal = {-prepared.frame.direction.east, prepared.frame.direction.north};
     prepared.limits = input.limits;
+
+    std::vector<Shape> effectiveInclusions = input.inclusions;
+    if (input.boundaryMargin > 0.0) {
+        BoundaryMarginResult marginResult = applyBoundaryMargin(input);
+        if (marginResult.status != BoundaryMarginStatus::Applied) {
+            error = std::move(marginResult.error);
+            if (marginResult.status == BoundaryMarginStatus::EmptyEffectiveArea) {
+                failureStatus = PlannerStatus::EmptyEffectiveArea;
+            } else if (marginResult.status == BoundaryMarginStatus::ComplexityLimit) {
+                failureStatus = PlannerStatus::ComplexityLimit;
+            }
+            return false;
+        }
+        effectiveInclusions = std::move(marginResult.inclusions);
+    }
+
+    ExclusionMarginResult exclusionMarginResult = applyExclusionMargins(input);
+    if (exclusionMarginResult.status != BoundaryMarginStatus::Applied) {
+        error = std::move(exclusionMarginResult.error);
+        if (exclusionMarginResult.status == BoundaryMarginStatus::ComplexityLimit) {
+            failureStatus = PlannerStatus::ComplexityLimit;
+        }
+        return false;
+    }
 
     auto appendShapes = [&](const std::vector<Shape>& shapes, bool inclusion, std::vector<PreparedShape>& target) {
         for (const Shape& shape : shapes) {
@@ -447,8 +771,8 @@ struct Roadmap
         return true;
     };
 
-    return appendShapes(input.inclusions, true, prepared.inclusions) &&
-           appendShapes(input.exclusions, false, prepared.exclusions);
+    return appendShapes(effectiveInclusions, true, prepared.inclusions) &&
+           appendShapes(exclusionMarginResult.exclusions, false, prepared.exclusions);
 }
 
 [[nodiscard]] bool pointInPolygon(const Point& point, const std::vector<Point>& polygon)
@@ -1633,6 +1957,11 @@ public:
         Transition result;
         if (allowedStart(variant)) {
             const CellVariant& next = _variants[variant];
+            if (!pointInEffectiveRegion(*_input.entryPoint, _prepared)) {
+                result.valid = true;
+                result.cost = 0.0;
+                return _entryCache.emplace(variant, std::move(result)).first->second;
+            }
             const auto path =
                 connectorPath(*_input.entryPoint, next.candidate.legs.front().start, _prepared, _roadmap, std::nullopt);
             if (path) {
@@ -1696,12 +2025,17 @@ public:
             return result;
         }
         const Transition& start = entry(sequence.front());
-        if (!start.valid || !appendRoutePoint(result.route, *_input.entryPoint, RoutePointType::Transit)) {
+        if (!start.valid) {
             return result;
         }
-        for (std::size_t index = 1; index + 1 < start.path.size(); ++index) {
-            if (!appendRoutePoint(result.route, start.path[index], RoutePointType::Transit)) {
-                return {};
+        if (pointInEffectiveRegion(*_input.entryPoint, _prepared)) {
+            if (!appendRoutePoint(result.route, *_input.entryPoint, RoutePointType::Transit)) {
+                return result;
+            }
+            for (std::size_t index = 1; index + 1 < start.path.size(); ++index) {
+                if (!appendRoutePoint(result.route, start.path[index], RoutePointType::Transit)) {
+                    return {};
+                }
             }
         }
         const auto appendVariant = [&result](const CellVariant& variant) {
@@ -2040,9 +2374,10 @@ private:
 PlannerResult legacyPlan(const PlannerInput& input)
 {
     PreparedInput prepared;
+    PlannerStatus failureStatus = PlannerStatus::InvalidInput;
     std::string error;
-    if (!prepareShapes(input, prepared, error)) {
-        return failure(PlannerStatus::InvalidInput, std::move(error));
+    if (!prepareShapes(input, prepared, failureStatus, error)) {
+        return failure(failureStatus, std::move(error));
     }
 
     ScanRowsResult rows = buildScanRows(prepared, input.spacing);
@@ -2160,9 +2495,10 @@ PlannerResult plan(const PlannerInput& input)
     }
 
     PreparedInput prepared;
+    PlannerStatus failureStatus = PlannerStatus::InvalidInput;
     std::string error;
-    if (!prepareShapes(input, prepared, error)) {
-        return failure(PlannerStatus::InvalidInput, std::move(error));
+    if (!prepareShapes(input, prepared, failureStatus, error)) {
+        return failure(failureStatus, std::move(error));
     }
     ScanRowsResult rows = buildScanRows(prepared, input.spacing);
     if (rows.status == ScanRowsStatus::ComplexityLimit) {
@@ -2223,8 +2559,10 @@ PlannerResult plan(const PlannerInput& input)
             const double lineDistance =
                 pointToSegmentDistance(*input.entryPoint, candidateLegs.front().start, candidateLegs.front().end);
             const double startDistance = distance(*input.entryPoint, candidateLegs.front().start);
+            const std::optional<Point> routeEntryPoint =
+                pointInEffectiveRegion(*input.entryPoint, prepared) ? input.entryPoint : std::nullopt;
             RouteCandidate candidate =
-                buildRouteCandidate(std::move(candidateLegs), input.entryPoint, prepared, *roadmap, input.costModel);
+                buildRouteCandidate(std::move(candidateLegs), routeEntryPoint, prepared, *roadmap, input.costModel);
             if (candidate.valid && (lineDistance + DISTANCE_EPSILON < bestLineDistance ||
                                     (std::abs(lineDistance - bestLineDistance) <= DISTANCE_EPSILON &&
                                      (startDistance + DISTANCE_EPSILON < bestStartDistance ||

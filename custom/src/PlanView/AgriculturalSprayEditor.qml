@@ -17,6 +17,14 @@ Rectangle {
     readonly property real _radius:            ScreenTools.defaultFontPixelWidth / 2
     readonly property bool _noInclusion:       missionItem.status === 0
     readonly property bool _routeReady:        missionItem.specifiesCoordinate
+    readonly property var _selectedField:      missionItem.selectedField
+
+    function setNonSprayPolygonInteractive(selectedPolygon, interactive) {
+        for (let index = 0; index < missionItem.nonSprayPolygons.count; index++) {
+            const polygon = missionItem.nonSprayPolygons.get(index)
+            polygon.interactive = interactive && polygon === selectedPolygon
+        }
+    }
 
     objectName: "agriculturalSprayEditor"
     width:      availableWidth
@@ -48,6 +56,102 @@ Rectangle {
         }
 
         QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Spray fields")
+            font.bold: true
+        }
+
+        QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Create each field separately. Select a field below to edit its settings and route.")
+            wrapMode: Text.WordWrap
+        }
+
+        QGCComboBox {
+            objectName: "agriculturalSprayFieldSelector"
+            Layout.fillWidth: true
+            model: _root.missionItem.fieldRows
+            textRole: "name"
+            currentIndex: _root.missionItem.selectedFieldRow
+            onActivated: _root.missionItem.setSelectedFieldIndex(_root.missionItem.fieldRows[index].index)
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            QGCTextField {
+                id: fieldNameField
+                Layout.fillWidth: true
+                text: _root.missionItem.selectedFieldRow >= 0
+                      ? _root.missionItem.fieldRows[_root.missionItem.selectedFieldRow].name
+                      : ""
+                placeholderText: qsTr("Field name")
+                onEditingFinished: _root.missionItem.renameField(_root.missionItem.selectedFieldIndex, text)
+            }
+
+            QGCButton {
+                text: qsTr("Add field")
+                onClicked: _root.missionItem.addField()
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: qsTr("Move up")
+                enabled: _root.missionItem.selectedFieldRow > 0
+                onClicked: {
+                    const row = _root.missionItem.selectedFieldRow
+                    _root.missionItem.moveField(_root.missionItem.fieldRows[row].index,
+                                                _root.missionItem.fieldRows[row - 1].index)
+                }
+            }
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: qsTr("Move down")
+                enabled: _root.missionItem.selectedFieldRow >= 0
+                         && _root.missionItem.selectedFieldRow < _root.missionItem.fieldRows.length - 1
+                onClicked: {
+                    const row = _root.missionItem.selectedFieldRow
+                    _root.missionItem.moveField(_root.missionItem.fieldRows[row].index,
+                                                _root.missionItem.fieldRows[row + 1].index)
+                }
+            }
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: qsTr("Delete field")
+                enabled: _root.missionItem.fieldRows.length > 1
+                onClicked: _root.missionItem.removeField(_root.missionItem.selectedFieldIndex)
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            visible: _root.missionItem.selectedFieldRow >= 0
+                     && _root.missionItem.selectedFieldRow < _root.missionItem.fieldRows.length - 1
+
+            QGCButton {
+                Layout.fillWidth: true
+                text: _root._selectedField && _root._selectedField.transitPolyline.traceMode
+                      ? qsTr("Finish transit") : qsTr("Add transit waypoint")
+                onClicked: {
+                    if (_root._selectedField) {
+                        _root._selectedField.transitPolyline.traceMode = !_root._selectedField.transitPolyline.traceMode
+                    }
+                }
+            }
+            QGCButton {
+                text: qsTr("Clear")
+                enabled: _root._selectedField && !_root._selectedField.transitPolyline.empty
+                onClicked: _root._selectedField.transitPolyline.clear()
+            }
+        }
+
+        QGCLabel {
             objectName:         "agriculturalSprayNoInclusionGuidance"
             Layout.fillWidth:   true
             text:               qsTr("Draw and finish the new field polygon in the GeoFence layer.")
@@ -56,10 +160,25 @@ Rectangle {
         }
 
         QGCButton {
+            objectName: "agriculturalSprayFinishFieldButton"
+            Layout.fillWidth: true
+            text: qsTr("Finish field")
+            visible: _root._selectedField && _root._selectedField.polygon.traceMode
+            onClicked: _root._selectedField.polygon.traceMode = false
+        }
+
+        QGCLabel {
+            Layout.fillWidth: true
+            text: qsTr("Click Add field, place at least three points on the map, then click Finish field.")
+            wrapMode: Text.WordWrap
+            visible: _root._selectedField && _root._selectedField.polygon.traceMode
+        }
+
+        QGCButton {
             objectName:         "agriculturalSprayEditGeoFenceButton"
             Layout.fillWidth:   true
             text:               qsTr("Edit GeoFence")
-            visible:            _root._noInclusion
+            visible:            _root._noInclusion && !_root._selectedField
             onClicked:          _root._missionController.requestPlanEditLayer("fenceGroup")
         }
 
@@ -83,7 +202,7 @@ Rectangle {
                 objectName:             "agriculturalSprayAltitudeField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.altitude
+                fact:                   _root._selectedField ? _root._selectedField.altitude : null
             }
 
             QGCLabel { text: qsTr("Line spacing") }
@@ -91,7 +210,68 @@ Rectangle {
                 objectName:             "agriculturalSprayLineSpacingField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.lineSpacing
+                fact:                   _root._selectedField ? _root._selectedField.lineSpacing : null
+            }
+
+            QGCLabel { text: qsTr("Boundary margin") }
+            FactTextField {
+                objectName:             "agriculturalSprayBoundaryMarginField"
+                Layout.fillWidth:       true
+                Layout.preferredWidth:  _root._fieldWidth
+                fact:                   _root._selectedField ? _root._selectedField.boundaryMargin : null
+            }
+
+            QGCLabel { text: qsTr("Margin scope") }
+            FactComboBox {
+                objectName:             "agriculturalSprayBoundaryMarginScopeCombo"
+                Layout.fillWidth:       true
+                Layout.preferredWidth:  _root._fieldWidth
+                fact:                   _root._selectedField ? _root._selectedField.boundaryMarginScope : null
+                indexModel:             false
+            }
+
+            QGCLabel {
+                objectName:         "agriculturalSprayMarginEdgeGuidance"
+                Layout.fillWidth:   true
+                Layout.columnSpan:  2
+                text:               qsTr("Tap an edge marker on the map to choose the boundary margin edge.")
+                wrapMode:           Text.WordWrap
+                visible:            _root.missionItem.boundaryMargin.rawValue > 0
+                                    && _root.missionItem.boundaryMarginScope.rawValue === 0
+            }
+
+            Repeater {
+                model: _root.missionItem.boundaryMarginScope.rawValue === 0
+                       ? _root.missionItem.fieldMarginRows
+                       : []
+
+                RowLayout {
+                    required property var modelData
+
+                    Layout.fillWidth:   true
+                    Layout.columnSpan:  2
+                    spacing:            _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             modelData.label
+                    }
+
+                    QGCTextField {
+                        Layout.preferredWidth: _root._fieldWidth
+                        text:                  Number(modelData.margin).toLocaleString(Qt.locale(), 'f', 2)
+                        inputMethodHints:      Qt.ImhFormattedNumbersOnly
+                        validator:             DoubleValidator { bottom: 0.0; decimals: 2 }
+                        onEditingFinished: {
+                            const value = Number.fromLocaleString(Qt.locale(), text)
+                            if (!isNaN(value) && value >= 0) {
+                                _root.missionItem.setFieldMargin(modelData.edgeIndex, value)
+                            }
+                        }
+                    }
+
+                    QGCLabel { text: qsTr("m") }
+                }
             }
 
             QGCLabel {
@@ -107,7 +287,7 @@ Rectangle {
                 objectName:             "agriculturalSprayDropletClassCombo"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.dropletClass
+                fact:                   _root._selectedField ? _root._selectedField.dropletClass : null
                 indexModel:             false
             }
 
@@ -116,7 +296,114 @@ Rectangle {
                 objectName:             "agriculturalSprayApplicationRateField"
                 Layout.fillWidth:       true
                 Layout.preferredWidth:  _root._fieldWidth
-                fact:                   _root.missionItem.applicationRate
+                fact:                   _root._selectedField ? _root._selectedField.applicationRate : null
+            }
+        }
+
+        ColumnLayout {
+            readonly property var _rows: _root.missionItem.exclusionMarginRows || []
+
+            Layout.fillWidth: true
+            spacing:          _root._margin
+            visible:          _rows.length > 0
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Exclusion margins")
+                font.bold:        true
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Additional distance kept from each exclusion GeoFence while generating the spray route.")
+                wrapMode:         Text.WordWrap
+            }
+
+            Repeater {
+                model: parent._rows
+
+                RowLayout {
+                    required property var modelData
+
+                    Layout.fillWidth: true
+                    spacing:          _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             modelData.label
+                    }
+
+                    QGCTextField {
+                        Layout.preferredWidth: _root._fieldWidth
+                        text:                  Number(modelData.margin).toLocaleString(Qt.locale(), 'f', 2)
+                        inputMethodHints:      Qt.ImhFormattedNumbersOnly
+                        validator:             DoubleValidator { bottom: 0.0; decimals: 2 }
+                        onEditingFinished: {
+                            const value = Number.fromLocaleString(Qt.locale(), text)
+                            if (!isNaN(value) && value >= 0) {
+                                _root.missionItem.setExclusionMargin(modelData.shape, value)
+                            }
+                        }
+                    }
+
+                    QGCLabel { text: qsTr("m") }
+                }
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing:          _root._margin
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("Traversable non-spray areas")
+                font.bold:        true
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("The route can cross these polygons, but spraying is paused inside them.")
+                wrapMode:         Text.WordWrap
+            }
+
+            QGCButton {
+                objectName:       "agriculturalSprayAddNonSprayPolygonButton"
+                Layout.fillWidth: true
+                text:             qsTr("Add non-spray area")
+                onClicked: {
+                    const polygon = _root.missionItem.addNonSprayPolygon()
+                    if (polygon) {
+                        _root.setNonSprayPolygonInteractive(polygon, true)
+                    }
+                }
+            }
+
+            Repeater {
+                model: _root.missionItem.nonSprayPolygons
+
+                RowLayout {
+                    required property var object
+                    required property int index
+
+                    Layout.fillWidth: true
+                    spacing:          _root._margin
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        text:             qsTr("Non-spray area %1").arg(parent.index + 1)
+                    }
+
+                    QGCButton {
+                        text: qsTr("Edit")
+                        onClicked: _root.setNonSprayPolygonInteractive(parent.object, !parent.object.interactive)
+                    }
+
+                    QGCButton {
+                        text:      qsTr("Delete")
+                        onClicked: _root.missionItem.removeNonSprayPolygon(parent.object)
+                    }
+                }
             }
         }
     }
